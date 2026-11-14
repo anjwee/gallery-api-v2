@@ -220,7 +220,7 @@ class ApiHttpServer(
             error("invalid_request_error", exception.message ?: "Invalid request"),
           )
         }
-      } catch (error: Exception) {
+      } catch (exception: Exception) {
         status = 500
         runCatching {
           writeJson(
