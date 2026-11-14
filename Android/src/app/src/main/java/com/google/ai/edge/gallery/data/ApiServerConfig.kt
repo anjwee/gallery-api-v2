@@ -4,6 +4,8 @@
  */
 package com.google.ai.edge.gallery.data
 
+import androidx.core.content.edit
+
 /** Persistent configuration for the LAN OpenAI-compatible API. */
 data class ApiServerConfig(
   val enabled: Boolean = false,
@@ -48,6 +50,24 @@ class ApiServerConfigManager(context: android.content.Context) {
   @Synchronized
   fun saveConfig(config: ApiServerConfig) {
     val valid = config.copy(enabled = _configFlow.value.enabled).validate()
+    preferences.edit {
+      putString("host", valid.host)
+      putInt("port", valid.port)
+      putBoolean("authentication_enabled", valid.authenticationEnabled)
+      putString("api_key", valid.apiKey)
+      putInt("max_concurrent", valid.maxConcurrent)
+      putInt("queue_size", valid.queueSize)
+      putLong("request_timeout_ms", valid.requestTimeoutMs)
+      putString("default_model_id", valid.defaultModelId)
+      putString("default_temperature", valid.defaultTemperature.toString())
+      putInt("default_max_tokens", valid.defaultMaxTokens)
+      putString("default_top_p", valid.defaultTopP.toString())
+      putInt("default_top_k", valid.defaultTopK)
+      putString("default_accelerator", valid.defaultAccelerator)
+      putString("default_vision_accelerator", valid.defaultVisionAccelerator)
+    }
+    /* old edit body removed */
+    /*
     preferences.edit()
       .putString("host", valid.host)
       .putInt("port", valid.port)
@@ -64,6 +84,7 @@ class ApiServerConfigManager(context: android.content.Context) {
       .putString("default_accelerator", valid.defaultAccelerator)
       .putString("default_vision_accelerator", valid.defaultVisionAccelerator)
       .apply()
+    */
     _configFlow.value = valid
   }
 
