@@ -27,7 +27,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Install Android SDK Platform 37
-        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-37"
+      - name: Install Android SDK Platform 37.0
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-37.0"
       - name: Build release APK
         run: ./gradlew assembleRelease --stacktrace
