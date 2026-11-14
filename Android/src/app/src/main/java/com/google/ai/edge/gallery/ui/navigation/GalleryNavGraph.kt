@@ -91,6 +91,7 @@ import com.google.ai.edge.gallery.ui.modelmanager.asModelSelectionHost
 import com.google.ai.edge.gallery.ui.modelmanager.isSavedModelSelectionComplete
 import com.google.ai.edge.gallery.ui.modelmanager.stopActiveVoicePreview
 import com.google.ai.edge.gallery.ui.notifications.NotificationsScreen
+import com.google.ai.edge.gallery.ui.settings.ApiServerSettingsScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -102,6 +103,7 @@ private const val ROUTE_BENCHMARK = "benchmark"
 private const val ROUTE_MODEL_MANAGER = "model_manager"
 private const val ARG_IMPORT_URL = "import_url"
 private const val ROUTE_NOTIFICATIONS = "notifications"
+private const val ROUTE_API_SERVER_SETTINGS = "api_server_settings"
 private const val ENTER_ANIMATION_DURATION_MS = 500
 private val ENTER_ANIMATION_EASING = EaseOutExpo
 private const val ENTER_ANIMATION_DELAY_MS = 100
@@ -214,6 +216,7 @@ fun GalleryNavHost(
         },
         onModelsClicked = { navController.navigate(ROUTE_MODEL_MANAGER) },
         onNotificationsClicked = { navController.navigate(ROUTE_NOTIFICATIONS) },
+        onApiServerSettingsClicked = { navController.navigate(ROUTE_API_SERVER_SETTINGS) },
         modifier = modifier,
       )
     }
@@ -500,6 +503,15 @@ fun GalleryNavHost(
       exitTransition = { slideDownExit() },
     ) {
       NotificationsScreen(navigateUp = { navController.navigateUp() })
+    }
+
+    // Local API server settings page. This is additive and leaves existing routes untouched.
+    composable(
+      route = ROUTE_API_SERVER_SETTINGS,
+      enterTransition = { slideUpEnter() },
+      exitTransition = { slideDownExit() },
+    ) {
+      ApiServerSettingsScreen(onBack = { navController.navigateUp() })
     }
 
     // Benchmark creation page.
