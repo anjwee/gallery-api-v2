@@ -514,6 +514,7 @@ fun GalleryNavHost(
       exitTransition = { slideDownExit() },
     ) {
       ApiServerSettingsScreen(
+        modelManagerViewModel = modelManagerViewModel,
         onBack = { navController.navigateUp() },
         onOpenLogs = { navController.navigate(ROUTE_API_SERVER_LOGS) },
       )

@@ -39,9 +39,9 @@ import org.json.JSONObject
 /**
  * Bridges the LAN API to Gallery's existing model definitions and LiteRT-LM runtime.
  *
- * This class intentionally does not hold a ModelManagerViewModel and never calls a CustomTask's
- * initialize/cleanup hooks: those hooks can reset the app-wide chat/agent session. API inference
- * uses LiteRT-LM's request-scoped ephemeral conversation so it does not reset the on-device chat.
+ * The active ModelManagerViewModel is attached by the settings screen when the user starts the
+ * server. This lets the API use Gallery's live task list and download-state registry. API inference
+ * still uses LiteRT-LM's request-scoped ephemeral conversation to isolate foreground chat state.
  *
  * AICore inference is deliberately rejected for now. AICoreModelHelper currently stores one
  * inferenceJob per model and cancels it on every new request; calling it from the API could cancel

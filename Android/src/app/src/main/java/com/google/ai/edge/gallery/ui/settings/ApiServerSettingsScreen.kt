@@ -54,7 +54,7 @@ fun ApiServerSettingsScreen(
   onBack: () -> Unit,
   onOpenLogs: () -> Unit,
   viewModel: ApiServerSettingsViewModel = hiltViewModel(),
-  modelManagerViewModel: ModelManagerViewModel = hiltViewModel(),
+  modelManagerViewModel: ModelManagerViewModel,
 ) {
   val config by viewModel.config.collectAsState()
   val status by viewModel.status.collectAsState()
