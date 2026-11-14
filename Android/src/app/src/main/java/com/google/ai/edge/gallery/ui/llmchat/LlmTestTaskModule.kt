@@ -29,6 +29,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
 import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Dedicated "Test it" task for user-imported OSS models.
@@ -53,6 +54,7 @@ constructor(@ApplicationContext context: Context, @AiChatExecutor executor: Agen
 internal object LlmTestTaskModule {
   @Provides
   @IntoSet
+  @Singleton
   fun provideTask(
     @ApplicationContext context: Context,
     @AiChatExecutor executor: AgentRuntimeExecutor,

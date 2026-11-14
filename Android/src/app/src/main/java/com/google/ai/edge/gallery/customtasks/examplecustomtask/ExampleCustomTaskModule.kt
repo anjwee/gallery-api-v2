@@ -22,6 +22,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
+import javax.inject.Singleton
 
 /**
  * A Hilt module that provides the `ExampleCustomTask` implementation.
@@ -37,6 +38,7 @@ internal object ExampleCustomTaskModule {
   /* Remove comment to enable the function to see this example custom task in action in the app.
   @Provides
   @IntoSet
+  @Singleton
   fun provideExampleCustomTask(): CustomTask {
     return ExampleCustomTask()
   }

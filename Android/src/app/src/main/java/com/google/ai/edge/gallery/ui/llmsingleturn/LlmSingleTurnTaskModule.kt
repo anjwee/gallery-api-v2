@@ -37,6 +37,7 @@ import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
+import javax.inject.Singleton
 
 class LlmSingleTurnTask @Inject constructor(@ApplicationContext private val context: Context) :
   CustomTask {
@@ -98,6 +99,7 @@ class LlmSingleTurnTask @Inject constructor(@ApplicationContext private val cont
 internal object LlmSingleTurnTaskModule {
   @Provides
   @IntoSet
+  @Singleton
   fun provideTask(@ApplicationContext context: Context): CustomTask {
     return LlmSingleTurnTask(context)
   }

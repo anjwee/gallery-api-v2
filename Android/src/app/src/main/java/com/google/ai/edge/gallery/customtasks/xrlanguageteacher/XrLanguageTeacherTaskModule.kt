@@ -40,6 +40,7 @@ import javax.inject.Singleton
 internal object XrLanguageTeacherTaskModule {
   @Provides
   @IntoSet
+  @Singleton
   fun provideXrLanguageTeacherTask(
     @ApplicationContext context: Context,
     @XrLanguageTeacherDictionary dictionaryDataStore: DataStore<Dictionary>,
