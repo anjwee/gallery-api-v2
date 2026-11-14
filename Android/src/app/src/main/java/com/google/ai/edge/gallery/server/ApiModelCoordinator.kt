@@ -21,7 +21,6 @@ import com.google.ai.edge.gallery.customtasks.common.CustomTask
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.runtime.EXTRA_CONTEXT_MAX_OUTPUT_TOKENS
-import com.google.ai.edge.gallery.runtime.ModelHelperExt
 import com.google.ai.edge.gallery.runtime.runtimeHelper
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
