@@ -61,8 +61,8 @@ fun ApiServerSettingsScreen(
   val serverInfo by viewModel.serverInfo.collectAsState()
   val downloadedModels = modelManagerViewModel.getAllDownloadedModels()
   val selectedModel = downloadedModels.firstOrNull { it.name == config.defaultModelId }
-  val textAccelerators = selectedModel?.accelerators?.ifEmpty { Accelerator.values().toList() }
-    ?: Accelerator.values().toList()
+  // Gallery's Model does not expose a direct accelerators property.
+  val textAccelerators = Accelerator.values().toList()
   val running = status is ApiServerStatus.Running || status is ApiServerStatus.Starting
 
   var host by remember(config.host) { mutableStateOf(config.host) }
@@ -126,11 +126,10 @@ fun ApiServerSettingsScreen(
           Button(
             enabled = !running && config.defaultModelId != model.name,
             onClick = {
-              val supported = model.accelerators.ifEmpty { Accelerator.values().toList() }
               viewModel.save(config.copy(
                 defaultModelId = model.name,
-                defaultAccelerator = supported.firstOrNull { it.label == config.defaultAccelerator }?.label
-                  ?: supported.firstOrNull()?.label ?: Accelerator.GPU.label,
+                defaultAccelerator = Accelerator.fromLabel(config.defaultAccelerator)?.label
+                  ?: Accelerator.GPU.label,
               ))
             },
           ) { Text(if (config.defaultModelId == model.name) "已选择" else "选择") }
