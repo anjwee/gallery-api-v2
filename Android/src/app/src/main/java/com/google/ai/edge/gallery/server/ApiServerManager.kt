@@ -6,6 +6,7 @@ package com.google.ai.edge.gallery.server
 
 import android.content.Context
 import android.util.Log
+import com.google.ai.edge.gallery.data.HttpTrafficLogger
 import com.google.ai.edge.gallery.data.ApiServerConfig
 import com.google.ai.edge.gallery.data.ApiServerConfigManager
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -131,6 +132,7 @@ class ApiServerManager @Inject constructor(
           Log.i(TAG, "event=server_state running=$running detail=$detail")
         },
         onRequest = { method, path, code, elapsed ->
+          HttpTrafficLogger.record(method, path, code, elapsed)
           Log.i(TAG, "event=http_request method=$method path=$path status=$code elapsed_ms=$elapsed")
         },
       )
