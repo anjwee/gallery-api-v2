@@ -19,6 +19,7 @@ package com.google.ai.edge.gallery
 import android.app.Application
 import android.os.Process
 import com.google.ai.edge.gallery.data.DataStoreRepository
+import com.google.ai.edge.gallery.data.HttpTrafficLogger
 import com.google.ai.edge.gallery.notifications.NotificationScheduleManager
 import com.google.ai.edge.gallery.services.tts.TtsMemoryTrimCallbacks
 import com.google.ai.edge.gallery.server.ApiServerManager
@@ -43,6 +44,7 @@ class GalleryApplication : Application() {
       return
     }
     super.onCreate()
+    HttpTrafficLogger.initialize(this)
     apiServerManager.initialize()
     registerComponentCallbacks(ttsMemoryTrimCallbacks)
     // Initialize the notification schedule manager to load the scheduled notifications from the
