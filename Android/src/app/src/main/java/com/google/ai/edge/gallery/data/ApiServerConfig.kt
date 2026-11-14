@@ -66,31 +66,12 @@ class ApiServerConfigManager(context: android.content.Context) {
       putString("default_accelerator", valid.defaultAccelerator)
       putString("default_vision_accelerator", valid.defaultVisionAccelerator)
     }
-    /* old edit body removed */
-    /*
-    preferences.edit()
-      .putString("host", valid.host)
-      .putInt("port", valid.port)
-      .putBoolean("authentication_enabled", valid.authenticationEnabled)
-      .putString("api_key", valid.apiKey)
-      .putInt("max_concurrent", valid.maxConcurrent)
-      .putInt("queue_size", valid.queueSize)
-      .putLong("request_timeout_ms", valid.requestTimeoutMs)
-      .putString("default_model_id", valid.defaultModelId)
-      .putString("default_temperature", valid.defaultTemperature.toString())
-      .putInt("default_max_tokens", valid.defaultMaxTokens)
-      .putString("default_top_p", valid.defaultTopP.toString())
-      .putInt("default_top_k", valid.defaultTopK)
-      .putString("default_accelerator", valid.defaultAccelerator)
-      .putString("default_vision_accelerator", valid.defaultVisionAccelerator)
-      .apply()
-    */
     _configFlow.value = valid
   }
 
   @Synchronized
   fun setEnabled(enabled: Boolean) {
-    preferences.edit().putBoolean("enabled", enabled).apply()
+    preferences.edit { putBoolean("enabled", enabled) }
     _configFlow.value = _configFlow.value.copy(enabled = enabled)
   }
 
