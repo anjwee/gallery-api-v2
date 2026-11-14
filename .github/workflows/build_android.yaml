@@ -3,9 +3,10 @@
   on:
     workflow_dispatch:
     push:
-      branches: [ "main" ]
+      branches: [ "main", "feature/lan-openai-api" ]
       paths:
         - 'Android/**'
+        - '.github/workflows/build_android.yaml'
     pull_request:
       branches: [ "main" ]
       paths:
