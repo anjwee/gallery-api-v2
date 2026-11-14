@@ -197,7 +197,7 @@ fun ApiServerSettingsScreen(
         val parsedQueue = queueSize.toIntOrNull()
         val parsedTimeout = timeout.toLongOrNull()
         if (
-          host.isNotBlank() && parsedPort in 1..65535 &&
+          host.isNotBlank() && parsedPort != null && parsedPort in 1..65535 &&
           parsedTemperature != null && parsedTemperature in 0.0..2.0 &&
           parsedTokens != null && parsedTokens > 0 &&
           parsedTopP != null && parsedTopP in 0.0..1.0 &&
@@ -209,7 +209,7 @@ fun ApiServerSettingsScreen(
         ) {
           viewModel.save(config.copy(
             host = host.trim(),
-            port = parsedPort!!,
+            port = parsedPort,
             authenticationEnabled = authEnabled,
             apiKey = apiKey.trim(),
             defaultTemperature = parsedTemperature,
