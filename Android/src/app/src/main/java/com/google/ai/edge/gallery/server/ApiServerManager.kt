@@ -9,19 +9,18 @@ import android.util.Log
 import com.google.ai.edge.gallery.data.ApiServerConfig
 import com.google.ai.edge.gallery.data.ApiServerConfigManager
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.security.SecureRandom
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.security.SecureRandom
 
 sealed interface ApiServerStatus {
   data object Stopped : ApiServerStatus
@@ -30,10 +29,7 @@ sealed interface ApiServerStatus {
   data class Error(val message: String) : ApiServerStatus
 }
 
-/**
- * Process-scoped owner of the HTTP server. It is deliberately independent of any Compose
- * screen/ViewModel, so navigating away from Settings does not stop the LAN API.
- */
+/** Process-scoped owner of the LAN API; it does not depend on a Compose screen's lifecycle. */
 @Singleton
 class ApiServerManager @Inject constructor(
   @ApplicationContext context: Context,
@@ -53,80 +49,94 @@ class ApiServerManager @Inject constructor(
     val wasRunning = isRunning()
     configManager.saveConfig(newConfig)
     if (wasRunning) {
-      // A listening socket cannot change its bind address or port in place.
-      stopServer()
-      startServer()
-    }
-  }
-
-  fun startServer() {
-    scope.launch {
-      mutex.withLock {
-        if (server?.isRunning() == true) return@withLock
-        val current = configManager.configFlow.value
-        try {
-          current.validate()
-          _status.value = ApiServerStatus.Starting("${current.host}:${current.port}")
-          val created = ApiHttpServer(
-            configProvider = {
-              val latest = configManager.configFlow.value
-              ApiHttpServerConfig(
-                bindAddress = latest.host,
-                port = latest.port,
-                apiKey = latest.apiKey,
-                authenticationEnabled = latest.authenticationEnabled,
-              )
-            },
-            gateway = gateway,
-            onStateChanged = { running, detail ->
-              _status.value = if (running) {
-                ApiServerStatus.Running("${current.host}:${current.port}")
-              } else if (detail != null) {
-                ApiServerStatus.Error(detail)
-              } else {
-                ApiServerStatus.Stopped
-              }
-              if (!running) configManager.setEnabled(false)
-              Log.i(TAG, "event=server_state running=$running detail=$detail")
-            },
-            onRequest = { method, path, code, elapsed ->
-              Log.i(TAG, "event=http_request method=$method path=$path status=$code elapsed_ms=$elapsed")
-            },
-          )
-          created.start()
-          server = created
-          configManager.setEnabled(true)
-          _status.value = ApiServerStatus.Running("${current.host}:${current.port}")
-          Log.i(TAG, "event=server_started host=${current.host} port=${current.port}")
-        } catch (error: Exception) {
-          server = null
-          configManager.setEnabled(false)
-          _status.value = ApiServerStatus.Error(error.message ?: error.javaClass.simpleName)
-          Log.e(TAG, "event=server_start_failed", error)
+      scope.launch {
+        mutex.withLock {
+          stopLocked()
+          startLocked()
         }
       }
     }
   }
 
+  fun startServer() {
+    scope.launch {
+      mutex.withLock { startLocked() }
+    }
+  }
+
   fun stopServer() {
     scope.launch {
-      mutex.withLock {
-        runCatching { server?.stop() }
-          .onFailure { Log.e(TAG, "event=server_stop_failed", it) }
-        server = null
-        configManager.setEnabled(false)
-        _status.value = ApiServerStatus.Stopped
-        Log.i(TAG, "event=server_stopped")
-      }
+      mutex.withLock { stopLocked() }
     }
   }
 
   fun isRunning(): Boolean = server?.isRunning() == true
 
-  /** Called once from GalleryApplication; do not auto-start a stale listener after process death. */
+  /**
+   * Initializes process state without silently reopening a LAN listener after Android killed
+   * the process. The persisted settings and API key remain available for the user to start again.
+   */
   fun initialize() {
+    val current = configManager.configFlow.value
+    if (current.apiKey.isBlank()) {
+      configManager.saveConfig(current.copy(apiKey = generateApiKey()))
+    }
     configManager.setEnabled(false)
     _status.value = ApiServerStatus.Stopped
+  }
+
+  private fun startLocked() {
+    if (server?.isRunning() == true) return
+    val current = configManager.configFlow.value
+    try {
+      current.validate()
+      _status.value = ApiServerStatus.Starting("${current.host}:${current.port}")
+      val created = ApiHttpServer(
+        configProvider = {
+          val latest = configManager.configFlow.value
+          ApiHttpServerConfig(
+            bindAddress = latest.host,
+            port = latest.port,
+            apiKey = latest.apiKey,
+            authenticationEnabled = latest.authenticationEnabled,
+          )
+        },
+        gateway = gateway,
+        onStateChanged = { running, detail ->
+          _status.value = if (running) {
+            ApiServerStatus.Running("${current.host}:${current.port}")
+          } else if (detail != null) {
+            ApiServerStatus.Error(detail)
+          } else {
+            ApiServerStatus.Stopped
+          }
+          if (!running) configManager.setEnabled(false)
+          Log.i(TAG, "event=server_state running=$running detail=$detail")
+        },
+        onRequest = { method, path, code, elapsed ->
+          Log.i(TAG, "event=http_request method=$method path=$path status=$code elapsed_ms=$elapsed")
+        },
+      )
+      created.start()
+      server = created
+      configManager.setEnabled(true)
+      _status.value = ApiServerStatus.Running("${current.host}:${current.port}")
+      Log.i(TAG, "event=server_started host=${current.host} port=${current.port}")
+    } catch (error: Exception) {
+      server = null
+      configManager.setEnabled(false)
+      _status.value = ApiServerStatus.Error(error.message ?: error.javaClass.simpleName)
+      Log.e(TAG, "event=server_start_failed", error)
+    }
+  }
+
+  private fun stopLocked() {
+    runCatching { server?.stop() }
+      .onFailure { Log.e(TAG, "event=server_stop_failed", it) }
+    server = null
+    configManager.setEnabled(false)
+    _status.value = ApiServerStatus.Stopped
+    Log.i(TAG, "event=server_stopped")
   }
 
   companion object {
