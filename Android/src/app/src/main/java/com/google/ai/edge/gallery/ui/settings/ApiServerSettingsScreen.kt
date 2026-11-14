@@ -39,6 +39,7 @@ class ApiServerSettingsViewModel @Inject constructor(
 ) : ViewModel() {
   val config = manager.config
   val status = manager.status
+  val serverInfo = manager.serverInfo
 
   fun save(config: ApiServerConfig) = manager.saveConfig(config)
   fun start() = manager.startServer()
@@ -53,6 +54,7 @@ fun ApiServerSettingsScreen(
 ) {
   val config by viewModel.config.collectAsState()
   val status by viewModel.status.collectAsState()
+  val serverInfo by viewModel.serverInfo.collectAsState()
   var host by remember(config.host) { mutableStateOf(config.host) }
   var port by remember(config.port) { mutableStateOf(config.port.toString()) }
   var apiKey by remember(config.apiKey) { mutableStateOf(config.apiKey) }
@@ -74,6 +76,13 @@ fun ApiServerSettingsScreen(
       },
       style = MaterialTheme.typography.bodyMedium,
     )
+
+    serverInfo?.let { info ->
+      Text(
+        "运行时间：${info.uptimeMillis / 1000}s    当前连接：${info.activeConnections}",
+        style = MaterialTheme.typography.bodySmall,
+      )
+    }
 
     Row(
       modifier = Modifier.fillMaxWidth(),
