@@ -37,6 +37,12 @@ object HttpTrafficLogger {
     persist()
   }
 
+  @Synchronized fun recordProgress(method: String, path: String, detail: String) {
+    if (!mutableEnabled.value || !::prefs.isInitialized) return
+    mutableLogs.value = (mutableLogs.value + Entry(System.currentTimeMillis(), method, path, 0, detail.take(180))).takeLast(MAX_ENTRIES)
+    persist()
+  }
+
   @Synchronized fun record(method: String, path: String, status: Int, elapsedMs: Long) {
     if (!mutableEnabled.value || !::prefs.isInitialized) return
     mutableLogs.value = (mutableLogs.value + Entry(System.currentTimeMillis(), method, path, status, "耗时 ${elapsedMs} ms")).takeLast(MAX_ENTRIES)

@@ -43,7 +43,11 @@ interface ApiModelGateway {
    * Runs one completion. When [onDelta] is non-null, implementations should emit incremental
    * assistant text as it becomes available. Return the final assistant text.
    */
-  fun complete(request: JSONObject, onDelta: ((String) -> Unit)? = null): String
+  fun complete(
+    request: JSONObject,
+    onDelta: ((String) -> Unit)? = null,
+    onProgress: ((String) -> Unit)? = null,
+  ): String
 }
 
 /** Small immutable snapshot of the HTTP server configuration. */
@@ -73,6 +77,8 @@ class ApiHttpServer(
   private val gateway: ApiModelGateway,
   private val onStateChanged: (running: Boolean, detail: String?) -> Unit = { _, _ -> },
   private val onRequestReceived: (method: String, path: String, detail: String) -> Unit =
+    { _, _, _ -> },
+  private val onRequestProgress: (method: String, path: String, detail: String) -> Unit =
     { _, _, _ -> },
   private val onRequest: (method: String, path: String, status: Int, elapsedMs: Long) -> Unit =
     { _, _, _, _ -> },
@@ -223,7 +229,9 @@ class ApiHttpServer(
               status = 200
               writeStreaming(output, request)
             } else {
-              val answer = gateway.complete(request)
+              val answer = gateway.complete(request, onProgress = { detail ->
+                onRequestProgress(method, path, detail)
+              })
               status = 200
               writeJson(output, status, completionResponse(request, answer))
             }
@@ -268,7 +276,7 @@ class ApiHttpServer(
         .toByteArray(Charsets.US_ASCII),
     )
     output.flush()
-    gateway.complete(request) { delta ->
+    gateway.complete(request, onDelta = { delta ->
       if (delta.isNotEmpty()) {
         val chunk = JSONObject()
           .put("id", id)
@@ -286,7 +294,9 @@ class ApiHttpServer(
           )
         writeSse(output, chunk)
       }
-    }
+    }, onProgress = { detail ->
+      onRequestProgress("POST", "/v1/chat/completions", detail)
+    })
     val finalChunk = JSONObject()
       .put("id", id)
       .put("object", "chat.completion.chunk")

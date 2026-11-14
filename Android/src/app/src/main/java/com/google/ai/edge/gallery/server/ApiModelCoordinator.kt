@@ -17,6 +17,7 @@
 package com.google.ai.edge.gallery.server
 
 import android.content.Context
+import android.util.Log
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.data.Model
@@ -87,7 +88,16 @@ class ApiModelCoordinator @Inject constructor(
     return result
   }
 
-  override fun complete(request: JSONObject, onDelta: ((String) -> Unit)?): String {
+  override fun complete(
+    request: JSONObject,
+    onDelta: ((String) -> Unit)?,
+    onProgress: ((String) -> Unit)?,
+  ): String {
+    fun progress(message: String) {
+      Log.i(TAG, "event=inference_progress detail=$message")
+      onProgress?.invoke(message)
+    }
+    progress("正在匹配模型")
     val modelName = request.optString("model").trim()
     require(modelName.isNotEmpty()) { "The 'model' field is required." }
     val entry = modelEntries().firstOrNull { entry ->
@@ -98,6 +108,7 @@ class ApiModelCoordinator @Inject constructor(
         model.downloadInfo.downloadFileName.equals(modelName, ignoreCase = true)
     } ?: throw IllegalArgumentException("Unknown model: $modelName")
     val model = entry.model
+    progress("模型已匹配：${model.displayName.ifBlank { model.name }}")
     require(model.isLlm) { "Model '$modelName' is not a language model." }
     require(!model.isAiCore) {
       "AICore API inference is temporarily disabled to protect the Gallery foreground chat. " +
@@ -112,6 +123,7 @@ class ApiModelCoordinator @Inject constructor(
     val failure = AtomicReference<String?>(null)
     val completed = CountDownLatch(1)
 
+    progress("正在加载模型运行时")
     runBlocking(Dispatchers.IO) {
       val loadError = model.runtimeHelper.loadModel(
         context = context,
@@ -119,9 +131,18 @@ class ApiModelCoordinator @Inject constructor(
         taskId = entry.task.id,
         supportImage = false,
         supportAudio = false,
+        onProgress = { detail -> progress("模型加载：$detail") },
       )
       check(loadError == null) { loadError ?: "Unable to load model '$modelName'." }
     }
+
+    progress("模型加载完成，正在初始化对话会话")
+    model.runtimeHelper.resetConversationOrThrow(
+      model = model,
+      supportImage = false,
+      supportAudio = false,
+    )
+    progress("会话初始化完成，开始推理")
 
     val extraContext = buildMap {
       put("aicore_ephemeral_inference", "true")
@@ -133,13 +154,19 @@ class ApiModelCoordinator @Inject constructor(
       input = prompt,
       resultListener = { partial, done, _ ->
         if (partial.isNotEmpty()) {
+          progress("模型正在生成回答")
           synchronized(output) { output.append(partial) }
           onDelta?.invoke(partial)
         }
-        if (done) completed.countDown()
+        if (done) {
+          progress("模型推理完成")
+          completed.countDown()
+        }
       },
       cleanUpListener = {},
       onError = { message ->
+        Log.e(TAG, "event=inference_error message=$message")
+        progress("推理失败：$message")
         failure.compareAndSet(null, message)
         completed.countDown()
       },
@@ -147,9 +174,14 @@ class ApiModelCoordinator @Inject constructor(
       extraContext = extraContext,
     )
 
+    progress("等待模型生成结果")
     check(completed.await(10, TimeUnit.MINUTES)) { "Model inference timed out." }
     failure.get()?.let { throw IllegalStateException(it) }
     return synchronized(output) { output.toString() }
+  }
+
+  companion object {
+    private const val TAG = "ApiModelCoordinator"
   }
 
   private fun isModelPresent(model: Model): Boolean =
