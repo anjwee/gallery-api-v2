@@ -50,6 +50,7 @@ class ApiServerSettingsViewModel @Inject constructor(
 @Composable
 fun ApiServerSettingsScreen(
   onBack: () -> Unit,
+  onOpenLogs: () -> Unit,
   viewModel: ApiServerSettingsViewModel = hiltViewModel(),
 ) {
   val config by viewModel.config.collectAsState()
@@ -165,6 +166,7 @@ fun ApiServerSettingsScreen(
       style = MaterialTheme.typography.bodySmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    Button(onClick = onOpenLogs, modifier = Modifier.fillMaxWidth()) { Text("查看 API 请求日志") }
     Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("返回") }
   }
 }
