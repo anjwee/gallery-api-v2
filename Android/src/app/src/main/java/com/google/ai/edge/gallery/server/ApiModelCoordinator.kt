@@ -18,12 +18,12 @@ package com.google.ai.edge.gallery.server
 
 import android.content.Context
 import com.google.ai.edge.gallery.customtasks.common.CustomTask
+import com.google.ai.edge.gallery.data.DownloadStorageManager
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.runtime.EXTRA_CONTEXT_MAX_OUTPUT_TOKENS
 import com.google.ai.edge.gallery.runtime.runtimeHelper
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -57,6 +57,10 @@ class ApiModelCoordinator @Inject constructor(
 
   private data class ModelEntry(val task: Task, val model: Model)
 
+  // Use Gallery's own download-state implementation so imported, versioned, zipped, and
+  // manually managed models follow exactly the same rules as the model manager UI.
+  private val downloadStorageManager by lazy { DownloadStorageManager(context) }
+
   private fun modelEntries(): List<ModelEntry> =
     customTasks.flatMap { customTask ->
       customTask.task.models.map { ModelEntry(customTask.task, it) }
@@ -82,8 +86,13 @@ class ApiModelCoordinator @Inject constructor(
   override fun complete(request: JSONObject, onDelta: ((String) -> Unit)?): String {
     val modelName = request.optString("model").trim()
     require(modelName.isNotEmpty()) { "The 'model' field is required." }
-    val entry = modelEntries().firstOrNull { it.model.name == modelName }
-      ?: throw IllegalArgumentException("Unknown model: $modelName")
+    val entry = modelEntries().firstOrNull { entry ->
+      val model = entry.model
+      model.name.equals(modelName, ignoreCase = true) ||
+        model.modelId.equals(modelName, ignoreCase = true) ||
+        model.displayName.equals(modelName, ignoreCase = true) ||
+        model.downloadInfo.downloadFileName.equals(modelName, ignoreCase = true)
+    } ?: throw IllegalArgumentException("Unknown model: $modelName")
     val model = entry.model
     require(model.isLlm) { "Model '$modelName' is not a language model." }
     require(!model.isAiCore) {
@@ -140,7 +149,7 @@ class ApiModelCoordinator @Inject constructor(
   }
 
   private fun isModelPresent(model: Model): Boolean =
-    runCatching { File(model.getPath(context)).exists() }.getOrDefault(false)
+    runCatching { downloadStorageManager.isModelDownloaded(model) }.getOrDefault(false)
 
   private fun messagesToPrompt(messages: JSONArray): String {
     require(messages.length() > 0) { "'messages' must contain at least one message." }
