@@ -19,8 +19,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+
+data class ApiServerInfo(val host: String, val port: Int, val uptimeMillis: Long, val activeConnections: Int)
 
 sealed interface ApiServerStatus {
   data object Stopped : ApiServerStatus
@@ -42,6 +46,9 @@ class ApiServerManager @Inject constructor(
   private val mutex = Mutex()
   private val _status = MutableStateFlow<ApiServerStatus>(ApiServerStatus.Stopped)
   val status: StateFlow<ApiServerStatus> = _status.asStateFlow()
+  private val _serverInfo = MutableStateFlow<ApiServerInfo?>(null)
+  val serverInfo: StateFlow<ApiServerInfo?> = _serverInfo.asStateFlow()
+  @Volatile private var monitorStarted = false
 
   @Volatile private var server: ApiHttpServer? = null
 
@@ -83,6 +90,16 @@ class ApiServerManager @Inject constructor(
     }
     configManager.setEnabled(false)
     _status.value = ApiServerStatus.Stopped
+    _serverInfo.value = null
+    if (!monitorStarted) {
+      monitorStarted = true
+      scope.launch {
+        while (isActive) {
+          refreshServerInfo()
+          delay(1_000L)
+        }
+      }
+    }
   }
 
   private fun startLocked() {
@@ -121,6 +138,7 @@ class ApiServerManager @Inject constructor(
       server = created
       configManager.setEnabled(true)
       _status.value = ApiServerStatus.Running("${current.host}:${current.port}")
+      refreshServerInfo()
       Log.i(TAG, "event=server_started host=${current.host} port=${current.port}")
     } catch (error: Exception) {
       server = null
@@ -136,7 +154,28 @@ class ApiServerManager @Inject constructor(
     server = null
     configManager.setEnabled(false)
     _status.value = ApiServerStatus.Stopped
+    _serverInfo.value = null
     Log.i(TAG, "event=server_stopped")
+  }
+
+  private fun refreshServerInfo() {
+    val activeServer = server
+    if (activeServer?.isRunning() == true) {
+      val current = configManager.configFlow.value
+      _status.value = ApiServerStatus.Running("${current.host}:${current.port}")
+      _serverInfo.value = ApiServerInfo(
+        host = current.host,
+        port = current.port,
+        uptimeMillis = activeServer.getUptimeMillis(),
+        activeConnections = activeServer.getCurrentConnections(),
+      )
+    } else {
+      _serverInfo.value = null
+      if (_status.value is ApiServerStatus.Running) {
+        _status.value = ApiServerStatus.Stopped
+        configManager.setEnabled(false)
+      }
+    }
   }
 
   companion object {
