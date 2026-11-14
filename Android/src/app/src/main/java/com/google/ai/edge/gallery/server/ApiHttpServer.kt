@@ -27,6 +27,7 @@ import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -75,6 +76,8 @@ class ApiHttpServer(
     { _, _, _, _ -> },
 ) {
   private val running = AtomicBoolean(false)
+  private val activeConnections = AtomicInteger(0)
+  @Volatile private var startedAtMillis: Long = 0L
   @Volatile private var serverSocket: ServerSocket? = null
   @Volatile private var acceptThread: Thread? = null
   @Volatile private var workers: ExecutorService? = null
@@ -90,6 +93,8 @@ class ApiHttpServer(
       50,
     )
     serverSocket = socket
+    startedAtMillis = System.currentTimeMillis()
+    activeConnections.set(0)
     workers = Executors.newCachedThreadPool()
     running.set(true)
     onStateChanged(true, "Listening on ${config.bindAddress}:${config.port}")
@@ -99,7 +104,14 @@ class ApiHttpServer(
           val client = socket.accept()
           try {
             client.soTimeout = configProvider().socketReadTimeoutMs
-            workers?.execute { handleClient(client) } ?: client.close()
+            workers?.execute {
+              activeConnections.incrementAndGet()
+              try {
+                handleClient(client)
+              } finally {
+                activeConnections.decrementAndGet()
+              }
+            } ?: client.close()
           } catch (exception: Exception) {
             runCatching { client.close() }
           }
@@ -127,6 +139,11 @@ class ApiHttpServer(
   }
 
   fun isRunning(): Boolean = running.get()
+
+  fun getUptimeMillis(): Long =
+    if (running.get()) (System.currentTimeMillis() - startedAtMillis).coerceAtLeast(0L) else 0L
+
+  fun getCurrentConnections(): Int = activeConnections.get()
 
   private fun stopWithError(error: Exception) {
     stop()
