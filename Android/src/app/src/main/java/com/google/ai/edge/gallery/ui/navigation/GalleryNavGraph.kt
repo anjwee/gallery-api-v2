@@ -92,6 +92,7 @@ import com.google.ai.edge.gallery.ui.modelmanager.isSavedModelSelectionComplete
 import com.google.ai.edge.gallery.ui.modelmanager.stopActiveVoicePreview
 import com.google.ai.edge.gallery.ui.notifications.NotificationsScreen
 import com.google.ai.edge.gallery.ui.settings.ApiServerSettingsScreen
+import com.google.ai.edge.gallery.ui.logs.HttpLogsScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -104,6 +105,7 @@ private const val ROUTE_MODEL_MANAGER = "model_manager"
 private const val ARG_IMPORT_URL = "import_url"
 private const val ROUTE_NOTIFICATIONS = "notifications"
 private const val ROUTE_API_SERVER_SETTINGS = "api_server_settings"
+private const val ROUTE_API_SERVER_LOGS = "api_server_logs"
 private const val ENTER_ANIMATION_DURATION_MS = 500
 private val ENTER_ANIMATION_EASING = EaseOutExpo
 private const val ENTER_ANIMATION_DELAY_MS = 100
@@ -511,7 +513,18 @@ fun GalleryNavHost(
       enterTransition = { slideUpEnter() },
       exitTransition = { slideDownExit() },
     ) {
-      ApiServerSettingsScreen(onBack = { navController.navigateUp() })
+      ApiServerSettingsScreen(
+        onBack = { navController.navigateUp() },
+        onOpenLogs = { navController.navigate(ROUTE_API_SERVER_LOGS) },
+      )
+    }
+
+    composable(
+      route = ROUTE_API_SERVER_LOGS,
+      enterTransition = { slideUpEnter() },
+      exitTransition = { slideDownExit() },
+    ) {
+      HttpLogsScreen(onBack = { navController.navigateUp() })
     }
 
     // Benchmark creation page.
