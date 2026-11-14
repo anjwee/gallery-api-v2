@@ -9,6 +9,7 @@ import android.util.Log
 import com.google.ai.edge.gallery.data.HttpTrafficLogger
 import com.google.ai.edge.gallery.data.ApiServerConfig
 import com.google.ai.edge.gallery.data.ApiServerConfigManager
+import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.security.SecureRandom
 import javax.inject.Inject
@@ -66,7 +67,8 @@ class ApiServerManager @Inject constructor(
     }
   }
 
-  fun startServer() {
+  fun startServer(modelManagerViewModel: ModelManagerViewModel) {
+    gateway.attachModelManager(modelManagerViewModel)
     scope.launch {
       mutex.withLock { startLocked() }
     }

@@ -44,7 +44,7 @@ class ApiServerSettingsViewModel @Inject constructor(
   val serverInfo = manager.serverInfo
 
   fun save(config: ApiServerConfig) = manager.saveConfig(config)
-  fun start() = manager.startServer()
+  fun start(modelManagerViewModel: ModelManagerViewModel) = manager.startServer(modelManagerViewModel)
   fun stop() = manager.stopServer()
   fun generateKey(): String = ApiServerManager.generateApiKey()
 }
@@ -105,7 +105,7 @@ fun ApiServerSettingsScreen(
       }
       Switch(
         checked = running,
-        onCheckedChange = { if (it) viewModel.start() else viewModel.stop() },
+        onCheckedChange = { if (it) viewModel.start(modelManagerViewModel) else viewModel.stop() },
       )
     }
 

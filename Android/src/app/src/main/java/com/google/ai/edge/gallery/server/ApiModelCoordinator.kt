@@ -17,8 +17,8 @@
 package com.google.ai.edge.gallery.server
 
 import android.content.Context
-import com.google.ai.edge.gallery.customtasks.common.CustomTask
-import com.google.ai.edge.gallery.data.DownloadStorageManager
+import com.google.ai.edge.gallery.data.ModelDownloadStatusType
+import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.runtime.EXTRA_CONTEXT_MAX_OUTPUT_TOKENS
@@ -50,21 +50,25 @@ import org.json.JSONObject
 @Singleton
 class ApiModelCoordinator @Inject constructor(
   @ApplicationContext private val context: Context,
-  private val customTasks: Set<@JvmSuppressWildcards CustomTask>,
 ) : ApiModelGateway {
 
   private val requestScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
   private data class ModelEntry(val task: Task, val model: Model)
 
-  // Use Gallery's own download-state implementation so imported, versioned, zipped, and
-  // manually managed models follow exactly the same rules as the model manager UI.
-  private val downloadStorageManager by lazy { DownloadStorageManager(context) }
+  // Use the exact task/model registry and download state displayed by Gallery's Models screen.
+  @Volatile private var modelManagerViewModel: ModelManagerViewModel? = null
 
-  private fun modelEntries(): List<ModelEntry> =
-    customTasks.flatMap { customTask ->
-      customTask.task.models.map { ModelEntry(customTask.task, it) }
+  fun attachModelManager(viewModel: ModelManagerViewModel) {
+    modelManagerViewModel = viewModel
+  }
+
+  private fun modelEntries(): List<ModelEntry> {
+    val state = modelManagerViewModel?.uiState?.value ?: return emptyList()
+    return state.tasks.flatMap { task ->
+      task.models.map { ModelEntry(task, it) }
     }.distinctBy { it.model.name }
+  }
 
   override fun listModels(): JSONArray {
     val result = JSONArray()
@@ -149,7 +153,8 @@ class ApiModelCoordinator @Inject constructor(
   }
 
   private fun isModelPresent(model: Model): Boolean =
-    runCatching { downloadStorageManager.isModelDownloaded(model) }.getOrDefault(false)
+    modelManagerViewModel?.uiState?.value?.modelDownloadStatus?.get(model.name)?.status ==
+      ModelDownloadStatusType.SUCCEEDED
 
   private fun messagesToPrompt(messages: JSONArray): String {
     require(messages.length() > 0) { "'messages' must contain at least one message." }
