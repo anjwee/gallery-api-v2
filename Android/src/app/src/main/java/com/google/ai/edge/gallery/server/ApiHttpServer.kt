@@ -72,6 +72,8 @@ class ApiHttpServer(
   private val configProvider: () -> ApiHttpServerConfig,
   private val gateway: ApiModelGateway,
   private val onStateChanged: (running: Boolean, detail: String?) -> Unit = { _, _ -> },
+  private val onRequestReceived: (method: String, path: String, detail: String) -> Unit =
+    { _, _, _ -> },
   private val onRequest: (method: String, path: String, status: Int, elapsedMs: Long) -> Unit =
     { _, _, _, _ -> },
 ) {
@@ -185,10 +187,12 @@ class ApiHttpServer(
 
         when {
           method == "GET" && path == "/health" -> {
+            onRequestReceived(method, path, "请求已收到，正在处理")
             status = 200
             writeJson(output, status, JSONObject().put("status", "ok"))
           }
           method == "GET" && path == "/v1/models" -> {
+            onRequestReceived(method, path, "请求已收到，正在读取模型列表")
             status = 200
             val data = gateway.listModels()
             writeJson(output, status, JSONObject().put("object", "list").put("data", data))
@@ -214,6 +218,7 @@ class ApiHttpServer(
               writeJson(output, status, error("invalid_request_error", "Request body must be JSON"))
               return
             }
+            onRequestReceived(method, path, requestPreview(request))
             if (request.optBoolean("stream", false)) {
               status = 200
               writeStreaming(output, request)
@@ -301,6 +306,26 @@ class ApiHttpServer(
   private fun writeSse(output: BufferedOutputStream, payload: JSONObject) {
     output.write(("data: ${payload}\n\n").toByteArray(Charsets.UTF_8))
     output.flush()
+  }
+
+  /** A short, privacy-conscious preview for the live request log; never logs headers or API keys. */
+  private fun requestPreview(request: JSONObject): String {
+    val messages = request.optJSONArray("messages") ?: return "聊天请求已收到"
+    for (index in messages.length() - 1 downTo 0) {
+      val message = messages.optJSONObject(index) ?: continue
+      if (message.optString("role") != "user") continue
+      val content = message.opt("content")
+      val text = when (content) {
+        is String -> content
+        is JSONArray -> (0 until content.length()).mapNotNull { partIndex ->
+          val part = content.optJSONObject(partIndex) ?: return@mapNotNull null
+          if (part.optString("type") == "text") part.optString("text") else null
+        }.joinToString(" ")
+        else -> ""
+      }.replace(Regex("\\s+"), " ").trim().take(120)
+      return if (text.isBlank()) "已收到用户消息" else "用户输入：$text"
+    }
+    return "聊天请求已收到"
   }
 
   private fun completionResponse(request: JSONObject, answer: String): JSONObject {

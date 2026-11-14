@@ -53,7 +53,11 @@ fun HttpLogsScreen(onBack: () -> Unit) {
               Column(Modifier.padding(12.dp)) {
                 val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(entry.time))
                 Text("$time  ${entry.method} ${entry.path}", style = MaterialTheme.typography.titleSmall)
-                Text("HTTP ${entry.status} · ${entry.detail}", style = MaterialTheme.typography.bodyMedium)
+                if (entry.status == 0) {
+                  Text("处理中 · ${entry.detail}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                } else {
+                  Text("HTTP ${entry.status} · ${entry.detail}", style = MaterialTheme.typography.bodyMedium)
+                }
               }
             }
           }

@@ -133,6 +133,10 @@ class ApiServerManager @Inject constructor(
           if (!running) configManager.setEnabled(false)
           Log.i(TAG, "event=server_state running=$running detail=$detail")
         },
+        onRequestReceived = { method, path, detail ->
+          HttpTrafficLogger.recordReceived(method, path, detail)
+          Log.i(TAG, "event=request_received method=$method path=$path detail=$detail")
+        },
         onRequest = { method, path, code, elapsed ->
           HttpTrafficLogger.record(method, path, code, elapsed)
           Log.i(TAG, "event=http_request method=$method path=$path status=$code elapsed_ms=$elapsed")
