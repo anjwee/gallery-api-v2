@@ -100,7 +100,7 @@ class ApiHttpServer(
           try {
             client.soTimeout = configProvider().socketReadTimeoutMs
             workers?.execute { handleClient(client) } ?: client.close()
-          } catch (error: Exception) {
+          } catch (exception: Exception) {
             runCatching { client.close() }
           }
         } catch (error: SocketException) {
@@ -211,13 +211,13 @@ class ApiHttpServer(
             writeJson(output, status, error("not_found", "Endpoint not found"))
           }
         }
-      } catch (error: IllegalArgumentException) {
+      } catch (exception: IllegalArgumentException) {
         status = 400
         runCatching {
           writeJson(
             BufferedOutputStream(client.getOutputStream()),
             status,
-            error("invalid_request_error", error.message ?: "Invalid request"),
+            error("invalid_request_error", exception.message ?: "Invalid request"),
           )
         }
       } catch (error: Exception) {
@@ -226,7 +226,7 @@ class ApiHttpServer(
           writeJson(
             BufferedOutputStream(client.getOutputStream()),
             status,
-            error("server_error", error.message ?: "Internal server error"),
+            error("server_error", exception.message ?: "Internal server error"),
           )
         }
       } finally {
