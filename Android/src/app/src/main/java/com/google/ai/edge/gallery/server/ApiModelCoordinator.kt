@@ -20,6 +20,7 @@ import android.content.Context
 import android.util.Log
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
+import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerUiState
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.runtime.EXTRA_CONTEXT_MAX_OUTPUT_TOKENS
@@ -64,17 +65,16 @@ class ApiModelCoordinator @Inject constructor(
     modelManagerViewModel = viewModel
   }
 
-  private fun modelEntries(): List<ModelEntry> {
-    val state = modelManagerViewModel?.uiState?.value ?: return emptyList()
-    return state.tasks.flatMap { task ->
+  private fun modelEntries(state: ModelManagerUiState): List<ModelEntry> =
+    state.tasks.flatMap { task ->
       task.models.map { ModelEntry(task, it) }
     }.distinctBy { it.model.name }
-  }
 
   override fun listModels(): JSONArray {
     val result = JSONArray()
-    modelEntries()
-      .filter { it.model.isLlm && !it.model.isAiCore && isModelPresent(it.model) }
+    val state = modelManagerViewModel?.uiState?.value ?: return result
+    modelEntries(state)
+      .filter { it.model.isLlm && !it.model.isAiCore && isModelPresent(it.model, state) }
       .forEach { entry ->
         result.put(
           JSONObject()
@@ -100,7 +100,11 @@ class ApiModelCoordinator @Inject constructor(
     progress("正在匹配模型")
     val modelName = request.optString("model").trim()
     require(modelName.isNotEmpty()) { "The 'model' field is required." }
-    val entry = modelEntries().firstOrNull { entry ->
+    // Read the registry and download status once so a concurrent UI-state refresh cannot
+    // make model lookup and the downloaded check observe different snapshots.
+    val state = modelManagerViewModel?.uiState?.value
+      ?: throw IllegalStateException("Model manager is not attached to the API server.")
+    val entry = modelEntries(state).firstOrNull { entry ->
       val model = entry.model
       model.name.equals(modelName, ignoreCase = true) ||
         model.modelId.equals(modelName, ignoreCase = true) ||
@@ -114,7 +118,12 @@ class ApiModelCoordinator @Inject constructor(
       "AICore API inference is temporarily disabled to protect the Gallery foreground chat. " +
         "Request-scoped AICore inference isolation is not implemented yet."
     }
-    require(isModelPresent(model)) { "Model '$modelName' is not downloaded." }
+    val downloadStatus = state.modelDownloadStatus[model.name]
+    Log.i(
+      TAG,
+      "event=model_download_status model=${model.name} status=${downloadStatus?.status}",
+    )
+    require(isModelPresent(model, state)) { "Model '$modelName' is not downloaded." }
 
     val prompt = messagesToPrompt(request.optJSONArray("messages")
       ?: throw IllegalArgumentException("'messages' must be an array."))
@@ -184,9 +193,8 @@ class ApiModelCoordinator @Inject constructor(
     private const val TAG = "ApiModelCoordinator"
   }
 
-  private fun isModelPresent(model: Model): Boolean =
-    modelManagerViewModel?.uiState?.value?.modelDownloadStatus?.get(model.name)?.status ==
-      ModelDownloadStatusType.SUCCEEDED
+  private fun isModelPresent(model: Model, state: ModelManagerUiState): Boolean =
+    state.modelDownloadStatus[model.name]?.status == ModelDownloadStatusType.SUCCEEDED
 
   private fun messagesToPrompt(messages: JSONArray): String {
     require(messages.length() > 0) { "'messages' must contain at least one message." }
