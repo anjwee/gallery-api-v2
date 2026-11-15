@@ -119,9 +119,11 @@ class ApiModelCoordinator @Inject constructor(
         "Request-scoped AICore inference isolation is not implemented yet."
     }
     val downloadStatus = state.modelDownloadStatus[model.name]
+    val downloadedOnDisk = modelManagerViewModel?.isModelDownloaded(model) == true
     Log.i(
       TAG,
-      "event=model_download_status model=${model.name} status=${downloadStatus?.status}",
+      "event=model_download_status model=${model.name} status=${downloadStatus?.status} " +
+        "downloaded_on_disk=$downloadedOnDisk",
     )
     require(isModelPresent(model, state)) { "Model '$modelName' is not downloaded." }
 
@@ -193,8 +195,12 @@ class ApiModelCoordinator @Inject constructor(
     private const val TAG = "ApiModelCoordinator"
   }
 
-  private fun isModelPresent(model: Model, state: ModelManagerUiState): Boolean =
-    state.modelDownloadStatus[model.name]?.status == ModelDownloadStatusType.SUCCEEDED
+  private fun isModelPresent(model: Model, state: ModelManagerUiState): Boolean {
+    // The UI status map can lag behind imported-model file operations or a state refresh.
+    // Confirm the actual file as a fallback so a valid local model remains usable by the API.
+    return state.modelDownloadStatus[model.name]?.status == ModelDownloadStatusType.SUCCEEDED ||
+      modelManagerViewModel?.isModelDownloaded(model) == true
+  }
 
   private fun messagesToPrompt(messages: JSONArray): String {
     require(messages.length() > 0) { "'messages' must contain at least one message." }
