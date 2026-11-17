@@ -17,6 +17,9 @@
 package com.google.ai.edge.gallery.server
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Base64
 import android.util.Log
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
@@ -140,8 +143,8 @@ class ApiModelCoordinator @Inject constructor(
         context = context,
         model = model,
         taskId = entry.task.id,
-        supportImage = false,
-        supportAudio = false,
+        supportImage = prompt.images.isNotEmpty(),
+        supportAudio = prompt.audioClips.isNotEmpty(),
         onProgress = { detail -> progress("模型加载：$detail") },
       )
       check(loadError == null) { loadError ?: "Unable to load model '$modelName'." }
@@ -150,8 +153,8 @@ class ApiModelCoordinator @Inject constructor(
     progress("模型加载完成，正在初始化对话会话")
     model.runtimeHelper.resetConversationOrThrow(
       model = model,
-      supportImage = false,
-      supportAudio = false,
+      supportImage = prompt.images.isNotEmpty(),
+      supportAudio = prompt.audioClips.isNotEmpty(),
     )
     progress("会话初始化完成，开始推理")
 
@@ -162,7 +165,7 @@ class ApiModelCoordinator @Inject constructor(
 
     model.runtimeHelper.runInference(
       model = model,
-      input = prompt,
+      input = prompt.text,
       resultListener = { partial, done, _ ->
         if (partial.isNotEmpty()) {
           progress("模型正在生成回答")
@@ -181,6 +184,8 @@ class ApiModelCoordinator @Inject constructor(
         failure.compareAndSet(null, message)
         completed.countDown()
       },
+      images = prompt.images,
+      audioClips = prompt.audioClips,
       coroutineScope = requestScope,
       extraContext = extraContext,
     )
@@ -202,9 +207,17 @@ class ApiModelCoordinator @Inject constructor(
       modelManagerViewModel?.isModelDownloaded(model) == true
   }
 
-  private fun messagesToPrompt(messages: JSONArray): String {
+  private data class PromptPayload(
+    val text: String,
+    val images: List<Bitmap>,
+    val audioClips: List<ByteArray>,
+  )
+
+  private fun messagesToPrompt(messages: JSONArray): PromptPayload {
     require(messages.length() > 0) { "'messages' must contain at least one message." }
     val prompt = StringBuilder()
+    val images = mutableListOf<Bitmap>()
+    val audioClips = mutableListOf<ByteArray>()
     for (index in 0 until messages.length()) {
       val message = messages.optJSONObject(index)
         ?: throw IllegalArgumentException("messages[$index] must be an object.")
@@ -218,14 +231,42 @@ class ApiModelCoordinator @Inject constructor(
         is JSONArray -> buildString {
           for (partIndex in 0 until content.length()) {
             val part = content.optJSONObject(partIndex) ?: continue
-            if (part.optString("type") == "text") append(part.optString("text"))
+            when (part.optString("type")) {
+              "text", "input_text" -> append(part.optString("text"))
+              "image_url" -> {
+                val imageUrl = part.opt("image_url")
+                val dataUrl = if (imageUrl is JSONObject) imageUrl.optString("url") else imageUrl?.toString().orEmpty()
+                require(dataUrl.startsWith("data:image/") && dataUrl.contains(";base64,")) {
+                  "Only base64 data URLs are supported for image_url. Remote image URLs are not supported."
+                }
+                val encoded = dataUrl.substringAfter(";base64,")
+                val bytes = decodeBase64(encoded, "image_url")
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                  ?: throw IllegalArgumentException("Unable to decode image_url image data.")
+                images.add(bitmap)
+              }
+              "input_audio" -> {
+                val audio = part.optJSONObject("input_audio")
+                  ?: throw IllegalArgumentException("input_audio must be an object.")
+                val encoded = audio.optString("data")
+                require(encoded.isNotBlank()) { "input_audio.data is required." }
+                audioClips.add(decodeBase64(encoded.substringAfter("base64,", encoded), "input_audio.data"))
+              }
+            }
           }
         }
-        else -> throw IllegalArgumentException("messages[$index].content must be text.")
+        else -> throw IllegalArgumentException("messages[$index].content must be text or a content array.")
       }
       prompt.append(role.uppercase()).append(": ").append(text).append('\n')
     }
     prompt.append("ASSISTANT:")
-    return prompt.toString()
+    return PromptPayload(prompt.toString(), images, audioClips)
   }
+
+  private fun decodeBase64(value: String, field: String): ByteArray =
+    try {
+      Base64.decode(value, Base64.DEFAULT)
+    } catch (exception: IllegalArgumentException) {
+      throw IllegalArgumentException("$field must contain valid base64 data.")
+    }
 }
