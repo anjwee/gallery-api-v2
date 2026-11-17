@@ -428,3 +428,4 @@ class ApiModelCoordinator @Inject constructor(
     } catch (exception: IllegalArgumentException) {
       throw IllegalArgumentException("$field must contain valid base64 data.")
     }
+}
