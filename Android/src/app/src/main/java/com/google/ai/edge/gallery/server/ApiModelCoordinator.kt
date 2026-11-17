@@ -42,6 +42,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -186,10 +187,14 @@ class ApiModelCoordinator @Inject constructor(
 
     try {
       progress("会话初始化完成，开始推理")
+      val inferenceStartedAt = System.nanoTime()
+      val callbackCount = AtomicInteger(0)
       conversation.sendMessageAsync(
         payload.finalMessage,
         object : MessageCallback {
           override fun onMessage(message: Message) {
+            val count = callbackCount.incrementAndGet()
+            Log.i(TAG, "event=inference_message callback=$count text_chars=${message.toString().length} tool_calls=${message.toolCalls.size} elapsed_ms=${(System.nanoTime() - inferenceStartedAt) / 1_000_000}")
             val text = message.toString()
             if (text.isNotEmpty()) {
               synchronized(output) { output.append(text) }
@@ -212,12 +217,13 @@ class ApiModelCoordinator @Inject constructor(
           }
 
           override fun onDone() {
+            Log.i(TAG, "event=inference_done callbacks=${callbackCount.get()} elapsed_ms=${(System.nanoTime() - inferenceStartedAt) / 1_000_000}")
             progress("模型推理完成")
             completed.countDown()
           }
 
           override fun onError(throwable: Throwable) {
-            Log.e(TAG, "event=inference_error message=${throwable.message}", throwable)
+            Log.e(TAG, "event=inference_error callbacks=${callbackCount.get()} elapsed_ms=${(System.nanoTime() - inferenceStartedAt) / 1_000_000} message=${throwable.message}", throwable)
             failure.compareAndSet(null, throwable.message ?: "Unknown inference error")
             completed.countDown()
           }
@@ -226,7 +232,7 @@ class ApiModelCoordinator @Inject constructor(
         maxOutputToken = maxTokens,
       )
       progress("等待模型生成结果")
-      check(completed.await(10, TimeUnit.MINUTES)) { "Model inference timed out." }
+      check(completed.await(10, TimeUnit.MINUTES)) { "Model inference timed out; callbacks_received=${callbackCount.get()}." }
       failure.get()?.let { throw IllegalStateException(it) }
     } finally {
       instance.activeEphemeralConversations.remove(conversation)
