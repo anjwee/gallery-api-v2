@@ -340,14 +340,31 @@ class ApiModelCoordinator @Inject constructor(
 
     val toolDefinitions = parseTools(request)
     val choice = request.opt("tool_choice")
-    val effectiveTools = if (choice is String && choice.equals("none", ignoreCase = true)) {
-      emptyList()
-    } else if (choice is JSONObject && choice.optJSONObject("function") != null) {
-      val selectedName = choice.getJSONObject("function").optString("name").trim()
-      require(selectedName.isNotEmpty()) { "tool_choice.function.name is required." }
-      listOfNotNull(toolDefinitions[selectedName])
-    } else {
-      toolDefinitions.values.toList()
+    val effectiveTools = when (choice) {
+      null, JSONObject.NULL -> toolDefinitions.values.toList()
+      is String -> when (choice.lowercase()) {
+        "none" -> emptyList()
+        "auto" -> toolDefinitions.values.toList()
+        "required" -> {
+          require(toolDefinitions.isNotEmpty()) {
+            "tool_choice=required requires at least one function tool."
+          }
+          // The runtime can constrain tool-call output, but strict forced-call semantics
+          // still depend on LiteRT-LM runtime support.
+          toolDefinitions.values.toList()
+        }
+        else -> throw IllegalArgumentException("Unsupported tool_choice: $choice")
+      }
+      is JSONObject -> {
+        val function = choice.optJSONObject("function")
+          ?: throw IllegalArgumentException("tool_choice.function is required for function selection.")
+        val selectedName = function.optString("name").trim()
+        require(selectedName.isNotEmpty()) { "tool_choice.function.name is required." }
+        val selectedTool = toolDefinitions[selectedName]
+          ?: throw IllegalArgumentException("tool_choice references unknown function: $selectedName")
+        listOf(selectedTool)
+      }
+      else -> throw IllegalArgumentException("tool_choice must be a string or function selector object.")
     }
 
     return PromptPayload(
