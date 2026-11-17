@@ -36,18 +36,33 @@ import org.json.JSONObject
  * Network-facing model contract. The implementation must delegate to Gallery's existing
  * model manager/runtime; this server deliberately does not create or own a second model runtime.
  */
+data class ApiToolCall(
+  val id: String,
+  val name: String,
+  val arguments: String,
+)
+
+data class ApiCompletionResult(
+  val content: String?,
+  val toolCalls: List<ApiToolCall> = emptyList(),
+) {
+  val finishReason: String
+    get() = if (toolCalls.isNotEmpty()) "tool_calls" else "stop"
+}
+
+/**
+ * Network-facing model contract. The gateway returns tool calls as data only. Tool execution
+ * belongs to the remote agent (Hermes), never to this Android API process.
+ */
 interface ApiModelGateway {
   fun listModels(): JSONArray
 
-  /**
-   * Runs one completion. When [onDelta] is non-null, implementations should emit incremental
-   * assistant text as it becomes available. Return the final assistant text.
-   */
   fun complete(
     request: JSONObject,
     onDelta: ((String) -> Unit)? = null,
+    onToolCalls: ((List<ApiToolCall>) -> Unit)? = null,
     onProgress: ((String) -> Unit)? = null,
-  ): String
+  ): ApiCompletionResult
 }
 
 /** Small immutable snapshot of the HTTP server configuration. */
@@ -276,7 +291,7 @@ class ApiHttpServer(
         .toByteArray(Charsets.US_ASCII),
     )
     output.flush()
-    gateway.complete(request, onDelta = { delta ->
+    val result = gateway.complete(request, onDelta = { delta ->
       if (delta.isNotEmpty()) {
         val chunk = JSONObject()
           .put("id", id)
@@ -294,6 +309,30 @@ class ApiHttpServer(
           )
         writeSse(output, chunk)
       }
+    }, onToolCalls = { calls ->
+      calls.forEachIndexed { index, call ->
+        val delta = JSONObject().put(
+          "tool_calls",
+          JSONArray().put(
+            JSONObject()
+              .put("index", index)
+              .put("id", call.id)
+              .put("type", "function")
+              .put("function", JSONObject()
+                .put("name", call.name)
+                .put("arguments", call.arguments)),
+          ),
+        )
+        val chunk = JSONObject()
+          .put("id", id)
+          .put("object", "chat.completion.chunk")
+          .put("created", created)
+          .put("model", model)
+          .put("choices", JSONArray().put(
+            JSONObject().put("index", 0).put("delta", delta).put("finish_reason", JSONObject.NULL),
+          ))
+        writeSse(output, chunk)
+      }
     }, onProgress = { detail ->
       onRequestProgress("POST", "/v1/chat/completions", detail)
     })
@@ -305,7 +344,8 @@ class ApiHttpServer(
       .put(
         "choices",
         JSONArray().put(
-          JSONObject().put("index", 0).put("delta", JSONObject()).put("finish_reason", "stop"),
+          JSONObject().put("index", 0).put("delta", JSONObject())
+            .put("finish_reason", result.finishReason),
         ),
       )
     writeSse(output, finalChunk)
@@ -338,12 +378,27 @@ class ApiHttpServer(
     return "聊天请求已收到"
   }
 
-  private fun completionResponse(request: JSONObject, answer: String): JSONObject {
-    val message = JSONObject().put("role", "assistant").put("content", answer)
+  private fun completionResponse(request: JSONObject, result: ApiCompletionResult): JSONObject {
+    val message = JSONObject().put("role", "assistant")
+    if (result.toolCalls.isNotEmpty()) {
+      message.put("content", JSONObject.NULL)
+      message.put("tool_calls", JSONArray().apply {
+        result.toolCalls.forEach { call ->
+          put(JSONObject()
+            .put("id", call.id)
+            .put("type", "function")
+            .put("function", JSONObject()
+              .put("name", call.name)
+              .put("arguments", call.arguments)))
+        }
+      })
+    } else {
+      message.put("content", result.content ?: "")
+    }
     val choice = JSONObject()
       .put("index", 0)
       .put("message", message)
-      .put("finish_reason", "stop")
+      .put("finish_reason", result.finishReason)
     return JSONObject()
       .put("id", "chatcmpl-${UUID.randomUUID()}")
       .put("object", "chat.completion")
