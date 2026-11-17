@@ -19,8 +19,10 @@ package com.google.ai.edge.gallery
 import android.app.Application
 import android.os.Process
 import com.google.ai.edge.gallery.data.DataStoreRepository
+import com.google.ai.edge.gallery.data.HttpTrafficLogger
 import com.google.ai.edge.gallery.notifications.NotificationScheduleManager
 import com.google.ai.edge.gallery.services.tts.TtsMemoryTrimCallbacks
+import com.google.ai.edge.gallery.server.ApiServerManager
 import com.google.ai.edge.gallery.ui.theme.ThemeSettings
 import com.google.firebase.FirebaseApp
 import dagger.hilt.android.HiltAndroidApp
@@ -32,6 +34,7 @@ class GalleryApplication : Application() {
   @Inject lateinit var dataStoreRepository: DataStoreRepository
   @Inject lateinit var notificationScheduleManager: NotificationScheduleManager
   @Inject lateinit var ttsMemoryTrimCallbacks: TtsMemoryTrimCallbacks
+  @Inject lateinit var apiServerManager: ApiServerManager
 
   override fun onCreate() {
     // androidx.pdf parses PDFs in an isolated service process, which also instantiates this
@@ -41,6 +44,8 @@ class GalleryApplication : Application() {
       return
     }
     super.onCreate()
+    HttpTrafficLogger.initialize(this)
+    apiServerManager.initialize()
     registerComponentCallbacks(ttsMemoryTrimCallbacks)
     // Initialize the notification schedule manager to load the scheduled notifications from the
     // disk.

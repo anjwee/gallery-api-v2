@@ -67,6 +67,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import javax.inject.Singleton
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Shared base for multi-turn LLM chat tasks.
@@ -266,6 +267,7 @@ constructor(@ApplicationContext context: Context, @AiChatExecutor executor: Agen
 internal object LlmChatTaskModule {
   @Provides
   @IntoSet
+  @Singleton
   fun provideTask(
     @ApplicationContext context: Context,
     @AiChatExecutor executor: AgentRuntimeExecutor,
@@ -361,6 +363,7 @@ constructor(
 internal object LlmAskImageModule {
   @Provides
   @IntoSet
+  @Singleton
   fun provideTask(
     @ApplicationContext context: Context,
     @AiChatExecutor executor: AgentRuntimeExecutor,
@@ -456,6 +459,7 @@ constructor(
 internal object LlmAskAudioModule {
   @Provides
   @IntoSet
+  @Singleton
   fun provideTask(
     @ApplicationContext context: Context,
     @AiChatExecutor executor: AgentRuntimeExecutor,

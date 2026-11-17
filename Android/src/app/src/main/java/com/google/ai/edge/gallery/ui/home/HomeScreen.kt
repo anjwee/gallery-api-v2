@@ -63,6 +63,7 @@ import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -164,6 +165,7 @@ fun HomeScreen(
   navigateToTaskScreen: (Task) -> Unit,
   onModelsClicked: () -> Unit,
   onNotificationsClicked: () -> Unit,
+  onApiServerSettingsClicked: () -> Unit,
   enableAnimation: Boolean,
   modifier: Modifier = Modifier,
 ) {
@@ -328,6 +330,25 @@ fun HomeScreen(
               }
               Spacer(modifier = Modifier.height(16.dp))
               Row(modifier = Modifier.fillMaxWidth()) {
+                SquareDrawerItem(
+                  label = "API Server",
+                  description = "Configure local network API",
+                  icon = Icons.Rounded.Wifi,
+                  onClick = {
+                    scope.launch { drawerState.close() }
+                    scope.launch {
+                      delay(50)
+                      onApiServerSettingsClicked()
+                    }
+                  },
+                  modifier = Modifier.weight(1f),
+                  iconBrush = linearGradient(
+                    colors = listOf(
+                      MaterialTheme.customColors.taskBgGradientColors[0][0],
+                      MaterialTheme.customColors.taskBgGradientColors[0][1],
+                    )
+                  ),
+                )
               }
             }
           }

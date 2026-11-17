@@ -2151,13 +2151,28 @@ constructor(
         }
 
         if (modelAllowlist == null) {
-          // Load from github.
-          var version = BuildConfig.VERSION_NAME.replace(".", "_")
-          val url = getAllowlistUrl(version)
-          Log.d(TAG, "Loading model allowlist from internet. Url: $url")
-          val data = getJsonResponse<ModelAllowlist>(url = url)
-          modelAllowlist = data?.jsonObj
+          // Load the allowlist matching this app version first.
+          val version = BuildConfig.VERSION_NAME.replace(".", "_")
+          var data = getJsonResponse<ModelAllowlist>(url = getAllowlistUrl(version))
+          Log.d(TAG, "Loading model allowlist from internet. Version: $version")
 
+          // Some published app versions do not have a matching allowlist file.
+          // In that case, try the immediately preceding patch version before using the
+          // on-device cache. The allowlist format is backward compatible for patch releases.
+          if (data?.jsonObj == null) {
+            val versionParts = BuildConfig.VERSION_NAME.split(".")
+            val patch = versionParts.getOrNull(2)?.toIntOrNull()
+            if (versionParts.size == 3 && patch != null && patch > 0) {
+              val fallbackVersion = "${versionParts[0]}_${versionParts[1]}_${patch - 1}"
+              Log.w(
+                TAG,
+                "Allowlist for $version unavailable. Trying previous patch version: $fallbackVersion",
+              )
+              data = getJsonResponse<ModelAllowlist>(url = getAllowlistUrl(fallbackVersion))
+            }
+          }
+
+          modelAllowlist = data?.jsonObj
           if (modelAllowlist == null) {
             Log.w(TAG, "Failed to load model allowlist from internet. Trying to load it from disk")
             modelAllowlist = readModelAllowlistFromDisk()

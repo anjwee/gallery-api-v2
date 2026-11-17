@@ -21,7 +21,7 @@ import com.google.ai.edge.gallery.R
 import kotlin.math.abs
 
 private const val MIN_MAX_TOKEN = 100
-private const val MAX_MAX_TOKEN = 4096
+private const val MAX_MAX_TOKEN = 200000
 private const val MIN_TOPK = 1
 private const val MAX_TOPK = 100
 private const val MIN_TOPP = 0.0f

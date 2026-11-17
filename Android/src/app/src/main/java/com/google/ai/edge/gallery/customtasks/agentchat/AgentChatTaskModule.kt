@@ -247,6 +247,7 @@ internal object AgentChatTaskModule {
 
   @Provides
   @IntoSet
+  @Singleton
   fun provideTask(
     @ApplicationContext context: Context,
     skillManager: SkillManager,

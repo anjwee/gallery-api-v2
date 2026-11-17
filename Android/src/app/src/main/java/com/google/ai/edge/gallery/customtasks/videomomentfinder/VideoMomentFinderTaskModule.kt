@@ -35,6 +35,7 @@ import javax.inject.Singleton
 internal object VideoMomentFinderTaskModule {
   @Provides
   @IntoSet
+  @Singleton
   fun provideTask(@ApplicationContext context: Context): CustomTask {
     return VideoMomentFinderTask(context)
   }
