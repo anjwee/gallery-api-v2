@@ -17,20 +17,30 @@
 package com.google.ai.edge.gallery.server
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.util.Base64
 import android.util.Log
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
-import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
-import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerUiState
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.Task
+import com.google.ai.edge.gallery.ui.llmchat.LlmModelInstance
+import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
+import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerUiState
 import com.google.ai.edge.gallery.runtime.EXTRA_CONTEXT_MAX_OUTPUT_TOKENS
 import com.google.ai.edge.gallery.runtime.runtimeHelper
+import com.google.ai.edge.litertlm.Content
+import com.google.ai.edge.litertlm.Contents
+import com.google.ai.edge.litertlm.ConversationConfig
+import com.google.ai.edge.litertlm.ExperimentalApi
+import com.google.ai.edge.litertlm.ExperimentalFlags
+import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.MessageCallback
+import com.google.ai.edge.litertlm.OpenApiTool
+import com.google.ai.edge.litertlm.ToolCall
+import com.google.ai.edge.litertlm.tool
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -91,11 +101,13 @@ class ApiModelCoordinator @Inject constructor(
     return result
   }
 
+  @OptIn(ExperimentalApi::class)
   override fun complete(
     request: JSONObject,
     onDelta: ((String) -> Unit)?,
+    onToolCalls: ((List<ApiToolCall>) -> Unit)?,
     onProgress: ((String) -> Unit)?,
-  ): String {
+  ): ApiCompletionResult {
     fun progress(message: String) {
       Log.i(TAG, "event=inference_progress detail=$message")
       onProgress?.invoke(message)
@@ -103,8 +115,6 @@ class ApiModelCoordinator @Inject constructor(
     progress("正在匹配模型")
     val modelName = request.optString("model").trim()
     require(modelName.isNotEmpty()) { "The 'model' field is required." }
-    // Read the registry and download status once so a concurrent UI-state refresh cannot
-    // make model lookup and the downloaded check observe different snapshots.
     val state = modelManagerViewModel?.uiState?.value
       ?: throw IllegalStateException("Model manager is not attached to the API server.")
     val entry = modelEntries(state).firstOrNull { entry ->
@@ -130,10 +140,10 @@ class ApiModelCoordinator @Inject constructor(
     )
     require(isModelPresent(model, state)) { "Model '$modelName' is not downloaded." }
 
-    val prompt = messagesToPrompt(request.optJSONArray("messages")
-      ?: throw IllegalArgumentException("'messages' must be an array."))
+    val payload = parseRequest(request)
     val maxTokens = request.optInt("max_tokens", 0).takeIf { it > 0 }
     val output = StringBuilder()
+    val toolCalls = mutableListOf<ApiToolCall>()
     val failure = AtomicReference<String?>(null)
     val completed = CountDownLatch(1)
 
@@ -143,57 +153,91 @@ class ApiModelCoordinator @Inject constructor(
         context = context,
         model = model,
         taskId = entry.task.id,
-        supportImage = prompt.images.isNotEmpty(),
-        supportAudio = prompt.audioClips.isNotEmpty(),
+        supportImage = payload.hasImage,
+        supportAudio = payload.hasAudio,
         onProgress = { detail -> progress("模型加载：$detail") },
       )
       check(loadError == null) { loadError ?: "Unable to load model '$modelName'." }
     }
 
-    progress("模型加载完成，正在初始化对话会话")
-    model.runtimeHelper.resetConversationOrThrow(
-      model = model,
-      supportImage = prompt.images.isNotEmpty(),
-      supportAudio = prompt.audioClips.isNotEmpty(),
-    )
-    progress("会话初始化完成，开始推理")
+    val instance = model.instance as? LlmModelInstance
+      ?: throw IllegalStateException("The selected model is not backed by the LiteRT-LM runtime.")
+    progress("模型加载完成，正在初始化手动工具调用会话")
+    // Manual mode is essential: LiteRT-LM returns tool calls to this API without executing them.
+    // Hermes on the remote Linux host remains the only process that executes tools.
+    ExperimentalFlags.enableConversationConstrainedDecoding = payload.tools.isNotEmpty()
+    val conversation = try {
+      instance.engine.createConversation(
+        ConversationConfig(
+          tools = payload.tools,
+          initialMessages = payload.initialMessages,
+          automaticToolCalling = false,
+        )
+      )
+    } finally {
+      ExperimentalFlags.enableConversationConstrainedDecoding = false
+    }
 
     val extraContext = buildMap {
       put("aicore_ephemeral_inference", "true")
       if (maxTokens != null) put(EXTRA_CONTEXT_MAX_OUTPUT_TOKENS, maxTokens.toString())
     }
 
-    model.runtimeHelper.runInference(
-      model = model,
-      input = prompt.text,
-      resultListener = { partial, done, _ ->
-        if (partial.isNotEmpty()) {
-          progress("模型正在生成回答")
-          synchronized(output) { output.append(partial) }
-          onDelta?.invoke(partial)
-        }
-        if (done) {
-          progress("模型推理完成")
-          completed.countDown()
-        }
-      },
-      cleanUpListener = {},
-      onError = { message ->
-        Log.e(TAG, "event=inference_error message=$message")
-        progress("推理失败：$message")
-        failure.compareAndSet(null, message)
-        completed.countDown()
-      },
-      images = prompt.images,
-      audioClips = prompt.audioClips,
-      coroutineScope = requestScope,
-      extraContext = extraContext,
-    )
+    try {
+      progress("会话初始化完成，开始推理")
+      conversation.sendMessageAsync(
+        payload.finalMessage,
+        object : MessageCallback {
+          override fun onMessage(message: Message) {
+            val text = message.toString()
+            if (text.isNotEmpty()) {
+              synchronized(output) { output.append(text) }
+              onDelta?.invoke(text)
+            }
+            if (message.toolCalls.isNotEmpty()) {
+              synchronized(toolCalls) {
+                toolCalls.clear()
+                message.toolCalls.forEach { call ->
+                  toolCalls.add(
+                    ApiToolCall(
+                      id = "call_${UUID.randomUUID()}",
+                      name = call.name,
+                      arguments = JSONObject(call.arguments).toString(),
+                    )
+                  )
+                }
+              }
+            }
+          }
 
-    progress("等待模型生成结果")
-    check(completed.await(10, TimeUnit.MINUTES)) { "Model inference timed out." }
-    failure.get()?.let { throw IllegalStateException(it) }
-    return synchronized(output) { output.toString() }
+          override fun onDone() {
+            progress("模型推理完成")
+            completed.countDown()
+          }
+
+          override fun onError(throwable: Throwable) {
+            Log.e(TAG, "event=inference_error message=${throwable.message}", throwable)
+            failure.compareAndSet(null, throwable.message ?: "Unknown inference error")
+            completed.countDown()
+          }
+        },
+        extraContext,
+        maxOutputToken = maxTokens,
+      )
+      progress("等待模型生成结果")
+      check(completed.await(10, TimeUnit.MINUTES)) { "Model inference timed out." }
+      failure.get()?.let { throw IllegalStateException(it) }
+    } finally {
+      runCatching { conversation.close() }
+    }
+
+    val finalToolCalls = synchronized(toolCalls) { toolCalls.toList() }
+    if (finalToolCalls.isNotEmpty()) {
+      progress("模型已生成 ${finalToolCalls.size} 个工具调用，等待 Hermes 执行")
+      onToolCalls?.invoke(finalToolCalls)
+      return ApiCompletionResult(content = null, toolCalls = finalToolCalls)
+    }
+    return ApiCompletionResult(content = synchronized(output) { output.toString() })
   }
 
   companion object {
@@ -208,59 +252,172 @@ class ApiModelCoordinator @Inject constructor(
   }
 
   private data class PromptPayload(
-    val text: String,
-    val images: List<Bitmap>,
-    val audioClips: List<ByteArray>,
+    val initialMessages: List<Message>,
+    val finalMessage: Message,
+    val hasImage: Boolean,
+    val hasAudio: Boolean,
+    val tools: List<com.google.ai.edge.litertlm.ToolProvider>,
   )
 
-  private fun messagesToPrompt(messages: JSONArray): PromptPayload {
+  private fun parseRequest(request: JSONObject): PromptPayload {
+    val messages = request.optJSONArray("messages")
+      ?: throw IllegalArgumentException("'messages' must be an array.")
     require(messages.length() > 0) { "'messages' must contain at least one message." }
-    val prompt = StringBuilder()
-    val images = mutableListOf<Bitmap>()
-    val audioClips = mutableListOf<ByteArray>()
+
+    val idToToolName = mutableMapOf<String, String>()
+    val parsedMessages = mutableListOf<Message>()
+    var hasImage = false
+    var hasAudio = false
+
     for (index in 0 until messages.length()) {
       val message = messages.optJSONObject(index)
         ?: throw IllegalArgumentException("messages[$index] must be an object.")
       val role = message.optString("role").lowercase()
-      require(role in setOf("system", "user", "assistant")) {
-        "Unsupported message role '$role'. Tool messages are not supported yet."
+      require(role in setOf("system", "user", "assistant", "tool")) {
+        "Unsupported message role '$role'."
       }
-      val content = message.opt("content")
-      val text = when (content) {
-        is String -> content
-        is JSONArray -> buildString {
-          for (partIndex in 0 until content.length()) {
-            val part = content.optJSONObject(partIndex) ?: continue
-            when (part.optString("type")) {
-              "text", "input_text" -> append(part.optString("text"))
-              "image_url" -> {
-                val imageUrl = part.opt("image_url")
-                val dataUrl = if (imageUrl is JSONObject) imageUrl.optString("url") else imageUrl?.toString().orEmpty()
-                require(dataUrl.startsWith("data:image/") && dataUrl.contains(";base64,")) {
-                  "Only base64 data URLs are supported for image_url. Remote image URLs are not supported."
-                }
-                val encoded = dataUrl.substringAfter(";base64,")
-                val bytes = decodeBase64(encoded, "image_url")
-                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                  ?: throw IllegalArgumentException("Unable to decode image_url image data.")
-                images.add(bitmap)
+
+      val contentParts = parseContent(message.opt("content"))
+      hasImage = hasImage || contentParts.any { it is Content.ImageBytes }
+      hasAudio = hasAudio || contentParts.any { it is Content.AudioBytes }
+      val contents = Contents.of(contentParts)
+      val text = contentParts.filterIsInstance<Content.Text>().joinToString("") { it.text }
+
+      val parsed = when (role) {
+        "system" -> Message.system(contents)
+        "user" -> Message.user(contents)
+        "assistant" -> {
+          val callsJson = message.optJSONArray("tool_calls")
+          val calls = mutableListOf<ToolCall>()
+          if (callsJson != null) {
+            for (callIndex in 0 until callsJson.length()) {
+              val call = callsJson.optJSONObject(callIndex) ?: continue
+              val function = call.optJSONObject("function")
+                ?: throw IllegalArgumentException("messages[$index].tool_calls[$callIndex].function is required.")
+              val name = function.optString("name").trim()
+              require(name.isNotEmpty()) { "Tool call function name is required." }
+              val argumentsValue = function.opt("arguments")
+              val arguments = when (argumentsValue) {
+                is JSONObject -> argumentsValue
+                is String -> JSONObject(argumentsValue)
+                else -> JSONObject()
               }
-              "input_audio" -> {
-                val audio = part.optJSONObject("input_audio")
-                  ?: throw IllegalArgumentException("input_audio must be an object.")
-                val encoded = audio.optString("data")
-                require(encoded.isNotBlank()) { "input_audio.data is required." }
-                audioClips.add(decodeBase64(encoded.substringAfter("base64,", encoded), "input_audio.data"))
+              val callId = call.optString("id").ifBlank { "history_call_${UUID.randomUUID()}" }
+              idToToolName[callId] = name
+              calls.add(ToolCall(name, jsonObjectToMap(arguments)))
+            }
+          }
+          Message.model(contents, calls)
+        }
+        "tool" -> {
+          val callId = message.optString("tool_call_id")
+          val name = message.optString("name").ifBlank { idToToolName[callId].orEmpty() }
+          require(name.isNotBlank()) {
+            "Tool message '$index' must include a name or a matching tool_call_id."
+          }
+          val response = message.opt("content")
+          Message.tool(Contents.of(Content.ToolResponse(name, response?.toString() ?: "")))
+        }
+        else -> throw IllegalArgumentException("Unsupported message role '$role'.")
+      }
+      parsedMessages.add(parsed)
+    }
+
+    val toolDefinitions = parseTools(request)
+    val choice = request.opt("tool_choice")
+    val effectiveTools = if (choice is String && choice.equals("none", ignoreCase = true)) {
+      emptyList()
+    } else if (choice is JSONObject && choice.optJSONObject("function") != null) {
+      val selectedName = choice.getJSONObject("function").optString("name")
+      toolDefinitions.filter { it.getToolDescriptionJsonString().let { json ->
+        JSONObject(json).optString("name") == selectedName
+      } }
+    } else {
+      toolDefinitions
+    }
+
+    return PromptPayload(
+      initialMessages = parsedMessages.dropLast(1),
+      finalMessage = parsedMessages.last(),
+      hasImage = hasImage,
+      hasAudio = hasAudio,
+      tools = effectiveTools,
+    )
+  }
+
+  private fun parseContent(content: Any?): List<Content> {
+    return when (content) {
+      null, JSONObject.NULL -> emptyList()
+      is String -> listOf(Content.Text(content))
+      is JSONArray -> buildList {
+        for (index in 0 until content.length()) {
+          val part = content.optJSONObject(index) ?: continue
+          when (part.optString("type")) {
+            "text", "input_text" -> add(Content.Text(part.optString("text")))
+            "image_url" -> {
+              val imageUrl = part.opt("image_url")
+              val dataUrl = if (imageUrl is JSONObject) imageUrl.optString("url") else imageUrl?.toString().orEmpty()
+              require(dataUrl.startsWith("data:image/") && dataUrl.contains(";base64,")) {
+                "Only base64 data URLs are supported for image_url. Remote image URLs are not supported."
               }
+              val bytes = decodeBase64(dataUrl.substringAfter(";base64,"), "image_url")
+              add(Content.ImageBytes(bytes))
+            }
+            "input_audio" -> {
+              val audio = part.optJSONObject("input_audio")
+                ?: throw IllegalArgumentException("input_audio must be an object.")
+              val encoded = audio.optString("data")
+              require(encoded.isNotBlank()) { "input_audio.data is required." }
+              add(Content.AudioBytes(decodeBase64(encoded.substringAfter("base64,", encoded), "input_audio.data")))
             }
           }
         }
-        else -> throw IllegalArgumentException("messages[$index].content must be text or a content array.")
       }
-      prompt.append(role.uppercase()).append(": ").append(text).append('\n')
+      else -> throw IllegalArgumentException("Message content must be text or a content array.")
     }
-    prompt.append("ASSISTANT:")
-    return PromptPayload(prompt.toString(), images, audioClips)
+  }
+
+  private fun parseTools(request: JSONObject): List<com.google.ai.edge.litertlm.ToolProvider> {
+    val tools = request.optJSONArray("tools") ?: return emptyList()
+    val result = mutableListOf<com.google.ai.edge.litertlm.ToolProvider>()
+    for (index in 0 until tools.length()) {
+      val item = tools.optJSONObject(index)
+        ?: throw IllegalArgumentException("tools[$index] must be an object.")
+      require(item.optString("type", "function") == "function") {
+        "Only function tools are supported."
+      }
+      val function = item.optJSONObject("function")
+        ?: throw IllegalArgumentException("tools[$index].function is required.")
+      val name = function.optString("name").trim()
+      require(name.isNotEmpty()) { "tools[$index].function.name is required." }
+      val description = function.optString("description")
+      val parameters = function.optJSONObject("parameters")
+        ?: JSONObject().put("type", "object").put("properties", JSONObject())
+      val schema = JSONObject()
+        .put("name", name)
+        .put("description", description)
+        .put("parameters", parameters)
+        .toString()
+      result.add(tool(object : OpenApiTool {
+        override fun getToolDescriptionJsonString(): String = schema
+
+        // Manual mode must never invoke this method. Returning a hard error is safer than
+        // accidentally running a tool inside the Android process if the runtime changes behavior.
+        override fun execute(paramsJsonString: String): String =
+          throw UnsupportedOperationException("Tool execution is disabled on the Android API. Execute '$name' on the remote agent.")
+      }))
+    }
+    return result
+  }
+
+  private fun jsonObjectToMap(value: JSONObject): Map<String, Any?> =
+    value.keys().asSequence().associateWith { key -> jsonValue(value.opt(key)) }
+
+  private fun jsonValue(value: Any?): Any? = when (value) {
+    null, JSONObject.NULL -> null
+    is JSONObject -> jsonObjectToMap(value)
+    is JSONArray -> (0 until value.length()).map { jsonValue(value.opt(it)) }
+    else -> value
   }
 
   private fun decodeBase64(value: String, field: String): ByteArray =
@@ -269,4 +426,3 @@ class ApiModelCoordinator @Inject constructor(
     } catch (exception: IllegalArgumentException) {
       throw IllegalArgumentException("$field must contain valid base64 data.")
     }
-}
