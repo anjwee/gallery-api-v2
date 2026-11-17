@@ -163,8 +163,43 @@ object LlmChatModelHelper : LlmModelHelper {
     onProgress: (String) -> Unit,
   ): String? =
     withContext(ioDispatcher) {
-      if (model.instance != null) {
-        Log.d(TAG, "Model '${model.name}' already loaded in LlmChatModelHelper. Skipping.")
+      val existingInstance = model.instance as? LlmModelInstance
+      if (existingInstance != null) {
+        val missingVisionExecutor = supportImage && existingInstance.engine.engineConfig.visionBackend == null
+        val missingAudioExecutor = supportAudio && existingInstance.engine.engineConfig.audioBackend == null
+        if (!missingVisionExecutor && !missingAudioExecutor) {
+          Log.d(TAG, "Model '${model.name}' already loaded with the requested capabilities. Skipping.")
+          model.markInitialized()
+          return@withContext null
+        }
+
+        // LiteRT-LM fixes vision/audio backends when Engine is created. A later multimodal
+        // request cannot enable an executor by resetting only the Conversation; recreate Engine.
+        Log.i(
+          TAG,
+          "Reloading model '${model.name}' to enable missing executors: " +
+            "vision=$missingVisionExecutor, audio=$missingAudioExecutor",
+        )
+        existingInstance.activeEphemeralConversations.toList().forEach { conversation ->
+          try {
+            conversation.close()
+          } catch (e: Exception) {
+            Log.w(TAG, "Failed to close an ephemeral conversation before engine reload", e)
+          }
+        }
+        try {
+          existingInstance.conversation?.close()
+        } catch (e: Exception) {
+          Log.w(TAG, "Failed to close conversation before engine reload", e)
+        }
+        try {
+          existingInstance.engine.close()
+        } catch (e: Exception) {
+          throw IllegalStateException("Unable to reload model with multimodal support: ${e.message}", e)
+        }
+        model.resetInitialization()
+      } else if (model.instance != null) {
+        Log.d(TAG, "Model '${model.name}' already loaded by another runtime instance. Skipping.")
         model.markInitialized()
         return@withContext null
       }
