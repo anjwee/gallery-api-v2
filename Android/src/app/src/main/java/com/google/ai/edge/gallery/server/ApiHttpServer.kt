@@ -239,7 +239,7 @@ class ApiHttpServer(
               writeJson(output, status, error("invalid_request_error", "Request body must be JSON"))
               return
             }
-            onRequestReceived(method, path, requestPreview(request))
+            onRequestReceived(method, path, "stream=${request.optBoolean(\"stream\", false)} messages=${request.optJSONArray(\"messages\")?.length() ?: 0} tools=${request.optJSONArray(\"tools\")?.length() ?: 0} | ${requestPreview(request)}")
             if (request.optBoolean("stream", false)) {
               status = 200
               writeStreaming(output, request)
@@ -291,71 +291,80 @@ class ApiHttpServer(
         .toByteArray(Charsets.US_ASCII),
     )
     output.flush()
-    val result = gateway.complete(request, onDelta = { delta ->
-      if (delta.isNotEmpty()) {
-        val chunk = JSONObject()
-          .put("id", id)
-          .put("object", "chat.completion.chunk")
-          .put("created", created)
-          .put("model", model)
-          .put(
-            "choices",
-            JSONArray().put(
-              JSONObject().put("index", 0).put(
-                "delta",
-                JSONObject().put("content", delta),
-              ).put("finish_reason", JSONObject.NULL),
-            ),
-          )
-        writeSse(output, chunk)
+
+    // Keep quiet SSE streams alive while local inference generates its first token.
+    // This prevents clients/proxies from timing out and retrying the same expensive request.
+    val finished = AtomicBoolean(false)
+    val heartbeat = Thread({
+      while (!finished.get()) {
+        try {
+          Thread.sleep(10_000)
+          if (!finished.get()) synchronized(output) {
+            output.write(": keep-alive\n\n".toByteArray(Charsets.UTF_8))
+            output.flush()
+          }
+        } catch (_: InterruptedException) {
+          break
+        } catch (_: Exception) {
+          break
+        }
       }
-    }, onToolCalls = { calls ->
-      calls.forEachIndexed { index, call ->
-        val delta = JSONObject().put(
-          "tool_calls",
-          JSONArray().put(
-            JSONObject()
-              .put("index", index)
-              .put("id", call.id)
-              .put("type", "function")
-              .put("function", JSONObject()
-                .put("name", call.name)
-                .put("arguments", call.arguments)),
-          ),
-        )
-        val chunk = JSONObject()
-          .put("id", id)
-          .put("object", "chat.completion.chunk")
-          .put("created", created)
-          .put("model", model)
-          .put("choices", JSONArray().put(
-            JSONObject().put("index", 0).put("delta", delta).put("finish_reason", JSONObject.NULL),
-          ))
-        writeSse(output, chunk)
+    }, "Gallery-API-SSE-Heartbeat").apply { isDaemon = true; start() }
+
+    try {
+      val result = gateway.complete(request, onDelta = { delta ->
+        if (delta.isNotEmpty()) {
+          val chunk = JSONObject().put("id", id).put("object", "chat.completion.chunk")
+            .put("created", created).put("model", model)
+            .put("choices", JSONArray().put(JSONObject().put("index", 0)
+              .put("delta", JSONObject().put("content", delta))
+              .put("finish_reason", JSONObject.NULL)))
+          writeSse(output, chunk)
+        }
+      }, onToolCalls = { calls ->
+        calls.forEachIndexed { index, call ->
+          val delta = JSONObject().put("tool_calls", JSONArray().put(JSONObject()
+            .put("index", index).put("id", call.id).put("type", "function")
+            .put("function", JSONObject().put("name", call.name).put("arguments", call.arguments))))
+          val chunk = JSONObject().put("id", id).put("object", "chat.completion.chunk")
+            .put("created", created).put("model", model)
+            .put("choices", JSONArray().put(JSONObject().put("index", 0)
+              .put("delta", delta).put("finish_reason", JSONObject.NULL)))
+          writeSse(output, chunk)
+        }
+      }, onProgress = { detail -> onRequestProgress("POST", "/v1/chat/completions", detail) })
+
+      val finalChunk = JSONObject().put("id", id).put("object", "chat.completion.chunk")
+        .put("created", created).put("model", model)
+        .put("choices", JSONArray().put(JSONObject().put("index", 0)
+          .put("delta", JSONObject()).put("finish_reason", result.finishReason)))
+      writeSse(output, finalChunk)
+      synchronized(output) {
+        output.write("data: [DONE]\n\n".toByteArray(Charsets.UTF_8))
+        output.flush()
       }
-    }, onProgress = { detail ->
-      onRequestProgress("POST", "/v1/chat/completions", detail)
-    })
-    val finalChunk = JSONObject()
-      .put("id", id)
-      .put("object", "chat.completion.chunk")
-      .put("created", created)
-      .put("model", model)
-      .put(
-        "choices",
-        JSONArray().put(
-          JSONObject().put("index", 0).put("delta", JSONObject())
-            .put("finish_reason", result.finishReason),
-        ),
-      )
-    writeSse(output, finalChunk)
-    output.write("data: [DONE]\n\n".toByteArray(Charsets.UTF_8))
-    output.flush()
+    } catch (exception: Exception) {
+      // After SSE headers are sent, errors must remain SSE events, not a second HTTP response.
+      runCatching {
+        val payload = JSONObject().put("error", JSONObject().put("type", "server_error")
+          .put("message", exception.message ?: "Inference failed"))
+        synchronized(output) {
+          output.write(("data: ${payload}\n\ndata: [DONE]\n\n").toByteArray(Charsets.UTF_8))
+          output.flush()
+        }
+      }
+    } finally {
+      finished.set(true)
+      heartbeat.interrupt()
+      runCatching { heartbeat.join(1_000) }
+    }
   }
 
   private fun writeSse(output: BufferedOutputStream, payload: JSONObject) {
-    output.write(("data: ${payload}\n\n").toByteArray(Charsets.UTF_8))
-    output.flush()
+    synchronized(output) {
+      output.write(("data: ${payload}\n\n").toByteArray(Charsets.UTF_8))
+      output.flush()
+    }
   }
 
   /** A short, privacy-conscious preview for the live request log; never logs headers or API keys. */
