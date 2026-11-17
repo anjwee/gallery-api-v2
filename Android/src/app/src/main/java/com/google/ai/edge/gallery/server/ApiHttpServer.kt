@@ -239,7 +239,14 @@ class ApiHttpServer(
               writeJson(output, status, error("invalid_request_error", "Request body must be JSON"))
               return
             }
-            onRequestReceived(method, path, "stream=${request.optBoolean(\"stream\", false)} messages=${request.optJSONArray(\"messages\")?.length() ?: 0} tools=${request.optJSONArray(\"tools\")?.length() ?: 0} | ${requestPreview(request)}")
+            val streamEnabled = request.optBoolean("stream", false)
+            val messageCount = request.optJSONArray("messages")?.length() ?: 0
+            val toolCount = request.optJSONArray("tools")?.length() ?: 0
+            onRequestReceived(
+              method,
+              path,
+              "stream=$streamEnabled messages=$messageCount tools=$toolCount | ${requestPreview(request)}",
+            )
             if (request.optBoolean("stream", false)) {
               status = 200
               writeStreaming(output, request)
