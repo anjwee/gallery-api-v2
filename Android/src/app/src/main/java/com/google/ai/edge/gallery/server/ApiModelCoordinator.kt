@@ -141,7 +141,7 @@ class ApiModelCoordinator @Inject constructor(
     require(isModelPresent(model, state)) { "Model '$modelName' is not downloaded." }
 
     val payload = parseRequest(request)
-    val maxTokens = request.optInt("max_tokens", 0).takeIf { it > 0 }
+    val maxTokens = outputTokenLimit(request)
     val output = StringBuilder()
     val toolCalls = mutableListOf<ApiToolCall>()
     val failure = AtomicReference<String?>(null)
@@ -261,6 +261,19 @@ class ApiModelCoordinator @Inject constructor(
     val tools: List<com.google.ai.edge.litertlm.ToolProvider>,
   )
 
+  private fun outputTokenLimit(request: JSONObject): Int? {
+    val field = when {
+      request.has("max_completion_tokens") && !request.isNull("max_completion_tokens") -> "max_completion_tokens"
+      request.has("max_tokens") && !request.isNull("max_tokens") -> "max_tokens"
+      else -> return null
+    }
+    val value = request.opt(field)
+    require(value is Number) { "The $field field must be a positive integer." }
+    val number = value as Number
+    val limit = number.toInt()
+    require(limit > 0 && limit.toDouble() == number.toDouble()) { "The $field field must be a positive integer." }
+    return limit
+  }
   private fun parseRequest(request: JSONObject): PromptPayload {
     val messages = request.optJSONArray("messages")
       ?: throw IllegalArgumentException("'messages' must be an array.")
