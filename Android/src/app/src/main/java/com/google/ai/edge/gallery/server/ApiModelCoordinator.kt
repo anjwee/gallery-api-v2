@@ -330,12 +330,11 @@ class ApiModelCoordinator @Inject constructor(
     val effectiveTools = if (choice is String && choice.equals("none", ignoreCase = true)) {
       emptyList()
     } else if (choice is JSONObject && choice.optJSONObject("function") != null) {
-      val selectedName = choice.getJSONObject("function").optString("name")
-      toolDefinitions.filter { it.getToolDescriptionJsonString().let { json ->
-        JSONObject(json).optString("name") == selectedName
-      } }
+      val selectedName = choice.getJSONObject("function").optString("name").trim()
+      require(selectedName.isNotEmpty()) { "tool_choice.function.name is required." }
+      listOfNotNull(toolDefinitions[selectedName])
     } else {
-      toolDefinitions
+      toolDefinitions.values.toList()
     }
 
     return PromptPayload(
@@ -379,9 +378,9 @@ class ApiModelCoordinator @Inject constructor(
     }
   }
 
-  private fun parseTools(request: JSONObject): List<com.google.ai.edge.litertlm.ToolProvider> {
-    val tools = request.optJSONArray("tools") ?: return emptyList()
-    val result = mutableListOf<com.google.ai.edge.litertlm.ToolProvider>()
+  private fun parseTools(request: JSONObject): Map<String, com.google.ai.edge.litertlm.ToolProvider> {
+    val tools = request.optJSONArray("tools") ?: return emptyMap()
+    val result = linkedMapOf<String, com.google.ai.edge.litertlm.ToolProvider>()
     for (index in 0 until tools.length()) {
       val item = tools.optJSONObject(index)
         ?: throw IllegalArgumentException("tools[$index] must be an object.")
@@ -400,14 +399,15 @@ class ApiModelCoordinator @Inject constructor(
         .put("description", description)
         .put("parameters", parameters)
         .toString()
-      result.add(tool(object : OpenApiTool {
+      require(!result.containsKey(name)) { "Duplicate tool name: $name" }
+      result[name] = tool(object : OpenApiTool {
         override fun getToolDescriptionJsonString(): String = schema
 
         // Manual mode must never invoke this method. Returning a hard error is safer than
         // accidentally running a tool inside the Android process if the runtime changes behavior.
         override fun execute(paramsJsonString: String): String =
           throw UnsupportedOperationException("Tool execution is disabled on the Android API. Execute '$name' on the remote agent.")
-      }))
+      })
     }
     return result
   }
