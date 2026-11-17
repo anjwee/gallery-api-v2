@@ -275,7 +275,7 @@ class ApiModelCoordinator @Inject constructor(
       val message = messages.optJSONObject(index)
         ?: throw IllegalArgumentException("messages[$index] must be an object.")
       val role = message.optString("role").lowercase()
-      require(role in setOf("system", "user", "assistant", "tool")) {
+      require(role in setOf("system", "developer", "user", "assistant", "tool")) {
         "Unsupported message role '$role'."
       }
 
@@ -286,7 +286,7 @@ class ApiModelCoordinator @Inject constructor(
       val text = contentParts.filterIsInstance<Content.Text>().joinToString("") { it.text }
 
       val parsed = when (role) {
-        "system" -> Message.system(contents)
+        "system", "developer" -> Message.system(contents)
         "user" -> Message.user(contents)
         "assistant" -> {
           val callsJson = message.optJSONArray("tool_calls")
