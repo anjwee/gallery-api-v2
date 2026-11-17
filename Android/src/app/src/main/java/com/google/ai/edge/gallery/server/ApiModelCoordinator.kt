@@ -178,6 +178,7 @@ class ApiModelCoordinator @Inject constructor(
       ExperimentalFlags.enableConversationConstrainedDecoding = false
     }
 
+    instance.activeEphemeralConversations.add(conversation)
     val extraContext = buildMap {
       put("aicore_ephemeral_inference", "true")
       if (maxTokens != null) put(EXTRA_CONTEXT_MAX_OUTPUT_TOKENS, maxTokens.toString())
@@ -228,6 +229,7 @@ class ApiModelCoordinator @Inject constructor(
       check(completed.await(10, TimeUnit.MINUTES)) { "Model inference timed out." }
       failure.get()?.let { throw IllegalStateException(it) }
     } finally {
+      instance.activeEphemeralConversations.remove(conversation)
       runCatching { conversation.close() }
     }
 
